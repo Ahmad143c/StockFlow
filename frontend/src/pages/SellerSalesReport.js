@@ -23,6 +23,7 @@ import {
   IconButton,
   Chip,
   Tooltip,
+  Alert,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import PrintIcon from '@mui/icons-material/Print';
@@ -43,6 +44,9 @@ const SellerSalesReport = () => {
   const [endDate, setEndDate] = useState('');
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [printPreviewHtml, setPrintPreviewHtml] = useState('');
+  // feedback messages for the user
+  const [success, setSuccess] = useState('');
+  const [error, setError] = useState('');
   const products = useSelector(state => (state?.products?.items) ?? []);
   const previewRef = useRef(null);
 
@@ -150,6 +154,8 @@ const SellerSalesReport = () => {
     <Box sx={{ width: '100%', mx: 'auto', }}>
       <Paper elevation={6} sx={{ p: 4, mb: 3, borderRadius: 4 }}>
         <Typography variant="h4" mb={3} color="primary">Sales Report</Typography>
+        {success && <Alert severity="success" onClose={() => setSuccess('')} sx={{ mb:2 }}>{success}</Alert>}
+        {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb:2 }}>{error}</Alert>}
         <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
           <TextField label="Search Product/Cashier/Customer/Invoice" value={search} onChange={e => setSearch(e.target.value)}  />
           <TextField select label="Status" value={status} onChange={e => setStatus(e.target.value)} sx={{ minWidth: 140 }}>
@@ -322,7 +328,7 @@ const SellerSalesReport = () => {
                         size="small"
                         color="error"
                         onClick={async () => {
-                          if (!confirm('Refund all refundable items for this invoice and restock the products?')) return;
+                          if (!window.confirm('Refund all refundable items for this invoice and restock the products?')) return;
                           try {
                             const token = localStorage.getItem('token');
                             const latest = await API.get(`/sales/${sale._id}`, {
