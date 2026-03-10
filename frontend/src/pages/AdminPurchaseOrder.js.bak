@@ -1,0 +1,1202 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import API from '../api/api';
+import { 
+  Box, Typography, TextField, Button, Paper, Grid, MenuItem, 
+  Select, InputLabel, FormControl, IconButton, Divider, 
+  Dialog, DialogTitle, DialogContent, DialogActions, 
+  Snackbar, Alert, Card, CardContent, FormHelperText,
+  InputAdornment, List, ListItem, ListItemIcon, ListItemText
+} from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import AttachmentIcon from '@mui/icons-material/Attachment';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import { useSelector, useDispatch } from 'react-redux';
+import { fetchProducts } from '../redux/productsSlice';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+
+// Constants
+const defaultUOM = ['pieces', 'boxes', 'kg', 'liters', 'meters', 'liters', 'pairs', 'sets', 'dozens'];
+const defaultStatus = ['Draft', 'Pending', 'Approved', 'Received', 'Partially Received', 'Cancelled'];
+const defaultPaymentTerms = ['Net 30', 'Net 60', 'COD', 'Advance Payment', 'Partial Payment', 'Credit'];
+const defaultPaymentMethods = ['Bank Transfer', 'Cheque', 'Cash', 'Credit Card', 'Online Payment'];
+const defaultDeliveryMethods = ['Courier', 'In-house transport', 'Self Pickup', 'Third-party Logistics'];
+const defaultPurchaseTypes = ['Local', 'International', 'Dropshipping'];
+const defaultCurrency = ['PKR', 'USD', 'EUR', 'GBP', 'AED', 'SAR'];
+const defaultDeliveryStatus = ['Pending', 'Partially Received', 'Received', 'Delayed', 'Cancelled'];
+
+// Validation function
+const validateField = (name, value) => {
+  switch (name) {
+    case 'poNumber':
+      return value ? '' : 'PO Number is required';
+    case 'supplierId':
+      return value ? '' : 'Supplier is required';
+    case 'poDate':
+      return value ? '' : 'Order date is required';
+    case 'grandTotal':
+      return value > 0 ? '' : 'Total amount must be greater than 0';
+    default:
+      return '';
+  }
+};
+
+// Initial form state
+const initialFormState = {
+  poNumber: '',
+  poDate: '',
+  supplierId: '',
+  supplierName: '',
+  supplierCode: '',
+  contactPerson: '',
+  supplierAddress: '',
+  supplierPhone: '',
+  supplierEmail: '',
+  expectedDeliveryDate: '',
+  deliveryMethod: '',
+  deliveryLocation: '',
+  orderStatus: 'Draft',
+  reference: '',
+  items: [{
+    itemCode: '',
+    itemName: '',
+    description: '',
+    quantityOrdered: 1,
+    uom: 'pieces',
+    perPiecePrice: 0,
+    unitPrice: 0,
+    tax: 0,
+    discount: 0,
+    itemSource: 'AdminProductList'
+  }],
+  subtotal: 0,
+  taxTotal: 0,
+  discountTotal: 0,
+  shippingCharges: 0,
+  grandTotal: 0,
+  paymentTerms: 'Net 30',
+  paymentMethod: 'Bank Transfer',
+  advanceAmount: 0,
+  creditAmount: 0,
+  initialPayment: 0,
+  finalPayment: 0,
+  purchaseType: 'Local',
+  currency: 'PKR',
+  notes: '',
+  createdBy: '',
+  approvedBy: ''
+};
+
+// Generate PO number function
+const generatePONumber = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  return `PO-${year}-${randomNum}`;
+};
+
+// Remove the duplicate generatePONumber function that appears later in the file
+
+const AdminPurchaseOrder = () => {
+  const dispatch = useDispatch();
+  const products = useSelector(state => state.products.items);
+  const [form, setForm] = useState({
+    ...initialFormState,
+    poNumber: generatePONumber(),
+    poDate: new Date().toISOString().slice(0, 10)
+  });
+
+  useEffect(() => {
+    dispatch(fetchProducts());
+  }, [dispatch]);
+
+  // Component state
+  const [errors, setErrors] = useState({});
+  const [suppliers, setSuppliers] = useState([]);
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(false);
+  const [fileList, setFileList] = useState([]);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [submitAction, setSubmitAction] = useState(() => () => {});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Initialize form with generated PO number
+  useEffect(() => {
+    setForm(prev => ({
+      ...prev,
+      poNumber: generatePONumber()
+    }));
+  }, []);
+
+  // Fetch suppliers
+  useEffect(() => {
+    const fetchSuppliers = async () => {
+      setIsLoadingSuppliers(true);
+      try {
+        const response = await API.get('/suppliers');
+        setSuppliers(response.data);
+      } catch (error) {
+        console.error('Error fetching suppliers:', error);
+        setSnackbar({
+          open: true,
+          message: 'Failed to load suppliers',
+          severity: 'error'
+        });
+      } finally {
+        setIsLoadingSuppliers(false);
+      }
+    };
+    fetchSuppliers();
+  }, []);
+
+  // Handle form field changes with validation
+  const handleChange = e => {
+    const { name, value } = e.target;
+    setForm(prev => ({
+      ...prev,
+      [name]: value
+    }));
+    
+    // Clear error when field is updated
+    if (errors[name]) {
+      setErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+  };
+  
+  // Handle supplier selection change
+  const handleSupplierChange = e => {
+    const supplierId = e.target.value;
+    const selectedSupplier = suppliers.find(s => s._id === supplierId);
+    
+    if (selectedSupplier) {
+      setForm(prev => ({
+        ...prev,
+        supplierId: selectedSupplier._id,
+        supplierName: selectedSupplier.name,
+        supplierCode: selectedSupplier.code || '',
+        contactPerson: selectedSupplier.contactPerson || '',
+        supplierAddress: selectedSupplier.address || '',
+        supplierPhone: selectedSupplier.phone || '',
+        supplierEmail: selectedSupplier.email || ''
+      }));
+    } else {
+      setForm(prev => ({
+        ...prev,
+        supplierId: '',
+        supplierName: '',
+        supplierCode: '',
+        contactPerson: '',
+        supplierAddress: '',
+        supplierPhone: '',
+        supplierEmail: ''
+      }));
+    }
+  };
+
+  // Handle item changes with calculations
+  const handleItemChange = (idx, e) => {
+    const { name, value } = e.target;
+    const items = [...form.items];
+    items[idx] = { ...items[idx], [name]: value };
+
+    // Auto-fill product details when item is selected
+    if (name === 'itemCode') {
+      const selectedProduct = products.find(p => p.SKU === value);
+      if (selectedProduct) {
+        items[idx] = {
+          ...items[idx],
+          itemName: selectedProduct.name,
+          perPiecePrice: selectedProduct.costPerPiece,
+          description: selectedProduct.category,
+          uom: selectedProduct.uom || items[idx].uom
+        };
+      }
+    }
+
+    // Auto-calculate unitPrice and update totals
+    if (['perPiecePrice', 'quantityOrdered', 'tax', 'discount'].includes(name)) {
+      const qty = parseFloat(items[idx].quantityOrdered) || 0;
+      const price = parseFloat(items[idx].perPiecePrice) || 0;
+      const taxRate = parseFloat(items[idx].tax) || 0;
+      const discountRate = parseFloat(items[idx].discount) || 0;
+      
+      const subtotal = qty * price;
+      const taxAmount = (subtotal * taxRate) / 100;
+      const discountAmount = (subtotal * discountRate) / 100;
+      
+      items[idx] = {
+        ...items[idx],
+        unitPrice: subtotal.toFixed(2),
+        tax: taxRate,
+        discount: discountRate
+      };
+    }
+
+    // Update form with new items and recalculate totals
+    const updatedForm = { ...form, items };
+    const totals = calculateTotals(updatedForm);
+    setForm({ ...updatedForm, ...totals });
+  };
+
+  const addItem = () => {
+    setForm({
+      ...form,
+      items: [...form.items, {
+        itemCode: '', itemName: '', description: '', quantityOrdered: '', uom: '', unitPrice: '', tax: '', discount: ''
+      }]
+    });
+  };
+
+  const removeItem = idx => {
+    const items = form.items.filter((_, i) => i !== idx);
+    setForm({ ...form, items });
+  };
+
+  // Handle file uploads
+  const handleFileUpload = e => {
+    const files = Array.from(e.target.files);
+    const newFiles = files.map(file => ({
+      file,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      preview: URL.createObjectURL(file)
+    }));
+
+    setFileList(prev => [...prev, ...newFiles]);
+    setForm(prev => ({
+      ...prev,
+      attachments: [...prev.attachments, ...files.map(f => f.name)]
+    }));
+  };
+
+  // Remove uploaded file
+  const handleRemoveFile = index => {
+    const newFileList = [...fileList];
+    const removedFile = newFileList.splice(index, 1)[0];
+    
+    // Clean up object URLs to avoid memory leaks
+    if (removedFile.preview) {
+      URL.revokeObjectURL(removedFile.preview);
+    }
+    
+    setFileList(newFileList);
+    setForm(prev => ({
+      ...prev,
+      attachments: prev.attachments.filter((_, i) => i !== index)
+    }));
+  };
+
+  // Format file size
+  const formatFileSize = bytes => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Calculate payment amounts based on form values
+  const calculatePayments = useCallback((formData) => {
+    const subtotal = formData.items.reduce((sum, item) => {
+      return sum + (parseFloat(item.unitPrice) || 0);
+    }, 0);
+    
+    const taxTotal = formData.items.reduce((sum, item) => {
+      const itemTotal = parseFloat(item.unitPrice) || 0;
+      const itemTax = (itemTotal * (parseFloat(item.tax) || 0)) / 100;
+      return sum + itemTax;
+    }, 0);
+    
+    const discountTotal = formData.items.reduce((sum, item) => {
+      const itemTotal = parseFloat(item.unitPrice) || 0;
+      const itemDiscount = (itemTotal * (parseFloat(item.discount) || 0)) / 100;
+      return sum + itemDiscount;
+    }, 0);
+    
+    const shippingCharges = parseFloat(formData.shippingCharges) || 0;
+    const grandTotal = subtotal + taxTotal - discountTotal + shippingCharges;
+    
+    // Calculate payment breakdown
+    const advanceAmount = parseFloat(formData.advanceAmount) || 0;
+    const creditAmount = parseFloat(formData.creditAmount) || 0;
+    const remainingBalance = grandTotal - advanceAmount - creditAmount;
+    
+    return {
+      subtotal: parseFloat(subtotal.toFixed(2)),
+      taxTotal: parseFloat(taxTotal.toFixed(2)),
+      discountTotal: parseFloat(discountTotal.toFixed(2)),
+      grandTotal: parseFloat(grandTotal.toFixed(2)),
+      remainingBalance: parseFloat(remainingBalance.toFixed(2))
+    };
+  }, []);
+  
+  // Update totals when form values change
+  useEffect(() => {
+    const totals = calculatePayments(form);
+    setForm(prev => ({
+      ...prev,
+      ...totals
+    }));
+  }, [form.items, form.shippingCharges, form.advanceAmount, form.creditAmount, calculatePayments, form]);
+  
+  // Calculate totals for display
+  const calculateTotals = () => {
+    let subtotal = 0, taxTotal = 0, discountTotal = 0;
+    
+    form.items.forEach(item => {
+      const price = parseFloat(item.unitPrice) || 0;
+      const tax = (price * (parseFloat(item.tax) || 0)) / 100;
+      const discount = (price * (parseFloat(item.discount) || 0)) / 100;
+      
+      subtotal += price;
+      taxTotal += tax;
+      discountTotal += discount;
+    });
+    
+    const shipping = Number(form.shippingCharges) || 0;
+    const grandTotal = subtotal + taxTotal - discountTotal + shipping;
+    
+    return { 
+      subtotal: parseFloat(subtotal.toFixed(2)),
+      taxTotal: parseFloat(taxTotal.toFixed(2)),
+      discountTotal: parseFloat(discountTotal.toFixed(2)),
+      grandTotal: parseFloat(grandTotal.toFixed(2))
+    };
+  };
+
+  // Validate form
+  const validateForm = () => {
+    const newErrors = {};
+    
+    // Required fields validation
+    if (!form.poNumber) newErrors.poNumber = 'PO Number is required';
+    if (!form.supplierId) newErrors.supplierId = 'Supplier is required';
+    if (!form.poDate) newErrors.poDate = 'Order date is required';
+    
+    // Validate at least one item with quantity and price
+    const hasValidItems = form.items.some(item => 
+      item.itemCode && item.quantityOrdered > 0 && item.unitPrice > 0
+    );
+    
+    if (!hasValidItems) {
+      newErrors.items = 'At least one valid item is required';
+    }
+    
+    // Validate payment terms if payment method is selected
+    if (form.paymentMethod && !form.paymentTerms) {
+      newErrors.paymentTerms = 'Payment terms are required when payment method is selected';
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  // Handle form submission
+  const handleSubmit = async (e, isDraft = false) => {
+    e.preventDefault();
+    
+    // Validate required fields if not a draft
+    if (!isDraft) {
+      const newErrors = {};
+      if (!form.supplierId) newErrors.supplierId = 'Supplier is required';
+      if (!form.poDate) newErrors.poDate = 'PO Date is required';
+      if (form.items.length === 0) newErrors.items = 'At least one item is required';
+      
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        setSnackbar({
+          open: true,
+          message: 'Please fill in all required fields',
+          severity: 'error'
+        });
+        return;
+      }
+    }
+
+    try {
+      setIsSubmitting(true);
+      const formData = new FormData();
+      
+      // Calculate item totals
+      const itemsWithTotals = form.items.map(item => ({
+        ...item,
+        unitPrice: (item.perPiecePrice || 0) * (item.quantityOrdered || 0),
+        totalLineAmount: ((item.perPiecePrice || 0) * (item.quantityOrdered || 0)) + (item.tax || 0) - (item.discount || 0)
+      }));
+      
+      // Prepare the purchase order data
+      const poData = {
+        ...form,
+        orderStatus: isDraft ? 'Draft' : 'Pending',
+        createdBy: 'Admin', // TODO: Replace with actual user from auth
+        items: itemsWithTotals,
+        // Calculate totals
+        subtotal: itemsWithTotals.reduce((sum, item) => sum + (item.perPiecePrice * item.quantityOrdered), 0),
+        taxTotal: itemsWithTotals.reduce((sum, item) => sum + (item.tax || 0), 0),
+        discountTotal: itemsWithTotals.reduce((sum, item) => sum + (item.discount || 0), 0),
+      };
+      
+      // Calculate grand total
+      poData.grandTotal = poData.subtotal + poData.taxTotal - poData.discountTotal + (form.shippingCharges || 0);
+      
+      // Add files to form data
+      fileList.forEach(file => {
+        formData.append('attachments', file.file);
+      });
+      
+      // Add JSON data as a string
+      formData.append('data', JSON.stringify(poData));
+      
+      // Submit to backend
+      const response = await API.post('/purchase-orders', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      // Show success message
+      setSnackbar({
+        open: true,
+        message: `Purchase Order ${isDraft ? 'saved as draft' : 'created'} successfully`,
+        severity: 'success'
+      });
+      
+      // Reset form if not a draft
+      if (!isDraft) {
+        setForm({
+          ...initialFormState,
+          poNumber: generatePONumber(),
+          poDate: new Date().toISOString().slice(0, 10)
+        });
+        setFileList([]);
+      }
+    } catch (error) {
+      console.error('Error submitting purchase order:', error);
+      setSnackbar({
+        open: true,
+        message: `Failed to ${isDraft ? 'save draft' : 'create'} purchase order: ${error.response?.data?.message || error.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setIsSubmitting(false);
+      setConfirmOpen(false);
+    }
+  };
+
+  // Show confirmation dialog before submission
+  const handleConfirmSubmit = (isDraft = false) => {
+    setSubmitAction(() => (e) => handleSubmit(e, isDraft));
+    setConfirmOpen(true);
+  };
+
+  // Close confirmation dialog
+  const handleCloseConfirm = () => {
+    setConfirmOpen(false);
+  };
+
+  // Close snackbar
+  const handleCloseSnackbar = () => {
+    setSnackbar(prev => ({ ...prev, open: false }));
+  };
+
+  // Handle form submission
+  const handleSubmit = async (e, isDraft = false) => {
+    e.preventDefault();
+    
+    // Validate required fields if not a draft
+    if (!isDraft) {
+      const newErrors = {};
+      if (!form.supplierId) newErrors.supplierId = 'Supplier is required';
+      if (!form.poDate) newErrors.poDate = 'PO Date is required';
+      if (form.items.length === 0) newErrors.items = 'At least one item is required';
+      
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        setSnackbar({
+          open: true,
+          message: 'Please fill in all required fields',
+          severity: 'error'
+        });
+        return;
+      }
+    }
+
+    try {
+      setIsSubmitting(true);
+      const formData = new FormData();
+      
+      // Add files to formData if any
+      fileList.forEach(file => {
+        formData.append('attachments', file.file);
+      });
+      
+      // Add form data
+      const poData = {
+        ...form,
+        orderStatus: isDraft ? 'Draft' : 'Pending',
+        createdBy: 'Admin', // Replace with actual user from auth
+        items: form.items.map(item => ({
+          ...item,
+          unitPrice: (item.perPiecePrice || 0) * (item.quantityOrdered || 0),
+          totalLineAmount: ((item.perPiecePrice || 0) * (item.quantityOrdered || 0)) + (item.tax || 0) - (item.discount || 0)
+        })),
+        // Calculate totals
+        subtotal: form.items.reduce((sum, item) => sum + ((item.perPiecePrice || 0) * (item.quantityOrdered || 0)), 0),
+        taxTotal: form.items.reduce((sum, item) => sum + (item.tax || 0), 0),
+        discountTotal: form.items.reduce((sum, item) => sum + (item.discount || 0), 0),
+        grandTotal: form.items.reduce((sum, item) => {
+          const itemTotal = ((item.perPiecePrice || 0) * (item.quantityOrdered || 0)) + (item.tax || 0) - (item.discount || 0);
+          return sum + itemTotal;
+        }, 0) + (form.shippingCharges || 0)
+      };
+      
+      formData.append('data', JSON.stringify(poData));
+      
+      // Submit to backend
+      const response = await API.post('/purchase-orders', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      setSnackbar({
+        open: true,
+        message: `Purchase Order ${isDraft ? 'saved as draft' : 'created'} successfully`,
+        severity: 'success'
+      });
+      
+      if (!isDraft) {
+        // Reset form for new entry
+        setForm({
+          ...initialFormState,
+          poNumber: generatePONumber(),
+          poDate: new Date().toISOString().slice(0, 10)
+        });
+        setFileList([]);
+      }
+      
+    } catch (error) {
+      console.error('Error saving purchase order:', error);
+      setSnackbar({
+        open: true,
+        message: `Failed to ${isDraft ? 'save draft' : 'create'} purchase order: ${error.response?.data?.message || error.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <Box sx={{ width: '98%', mx: 'auto', p: 2, overflowX: 'auto' }}>
+        <Paper elevation={3} sx={{ p: 3, mb: 3, minWidth: '1400px' }}>
+          <Box component="form" onSubmit={e => e.preventDefault()}>
+            <Typography variant="h4" gutterBottom color="primary">
+              {form.orderStatus === 'Draft' ? 'Draft Purchase Order' : 'Create Purchase Order'}
+            </Typography>
+            
+            <Grid container spacing={2}>
+              {/* Left Column - Form Fields */}
+              <Grid item xs={12} lg={9}>
+                {/* General Information Card */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>General Information</Typography>
+                    <Divider sx={{ mb: 3 }} />
+                    
+                    <Grid container spacing={2}>
+                      {/* PO Number */}
+                      <Grid item xs={12} sm={6}>
+                        <TextField
+                          fullWidth
+                          label="PO Number *"
+                          name="poNumber"
+                          value={form.poNumber}
+                          onChange={handleChange}
+                          error={!!errors.poNumber}
+                          helperText={errors.poNumber}
+                          margin="normal"
+                          variant="outlined"
+                          InputProps={{
+                            readOnly: true,
+                            endAdornment: (
+                              <IconButton onClick={() => setForm(prev => ({ ...prev, poNumber: generatePONumber() }))}>
+                                <RefreshIcon />
+                              </IconButton>
+                            )
+                          }}
+                        />
+                      </Grid>
+                      
+                      {/* PO Date */}
+                      <Grid item xs={12} sm={6}>
+                        <DatePicker
+                          label="PO Date *"
+                          value={form.poDate ? new Date(form.poDate) : null}
+                          onChange={(date) => {
+                            const formattedDate = date ? date.toISOString().split('T')[0] : '';
+                            setForm(prev => ({ ...prev, poDate: formattedDate }));
+                            if (errors.poDate) {
+                              setErrors(prev => ({ ...prev, poDate: '' }));
+                            }
+                          }}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              fullWidth
+                              margin="normal"
+                              error={!!errors.poDate}
+                              helperText={errors.poDate}
+                            />
+                          )}
+                        />
+                      </Grid>
+                      
+                      {/* Supplier Selection */}
+                      <Grid item xs={12}>
+                        <FormControl fullWidth margin="normal" error={!!errors.supplierId}>
+                          <InputLabel>Supplier *</InputLabel>
+                          <Select
+                            name="supplierId"
+                            value={form.supplierId || ''}
+                            onChange={handleSupplierChange}
+                            label="Supplier *"
+                            disabled={isLoadingSuppliers}
+                          >
+                            {isLoadingSuppliers ? (
+                              <MenuItem disabled>Loading suppliers...</MenuItem>
+                            ) : (
+                              suppliers.map(supplier => (
+                                <MenuItem key={supplier._id} value={supplier._id}>
+                                  {supplier.name} {supplier.code ? `(${supplier.code})` : ''}
+                                </MenuItem>
+                              ))
+                            )}
+                          </Select>
+                          {errors.supplierId && (
+                            <FormHelperText>{errors.supplierId}</FormHelperText>
+                          )}
+                          <Box sx={{ mt: 1 }}>
+                            <Button 
+                              size="small" 
+                              startIcon={<AddIcon />}
+                              onClick={() => window.open('/suppliers/new', '_blank')}
+                            >
+                              Add New Supplier
+                            </Button>
+                          </Box>
+                        </FormControl>
+                      </Grid>
+                      
+                      {/* Expected Delivery Date */}
+                      <Grid item xs={12} sm={6}>
+                        <DatePicker
+                          label="Expected Delivery Date"
+                          value={form.expectedDeliveryDate ? new Date(form.expectedDeliveryDate) : null}
+                          onChange={(date) => {
+                            const formattedDate = date ? date.toISOString().split('T')[0] : '';
+                            setForm(prev => ({ ...prev, expectedDeliveryDate: formattedDate }));
+                          }}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              fullWidth
+                              margin="normal"
+                            />
+                          )}
+                        />
+                      </Grid>
+                      
+                      {/* Delivery Method */}
+                      <Grid item xs={12} sm={6}>
+                        <FormControl fullWidth margin="normal">
+                          <InputLabel>Delivery Method</InputLabel>
+                          <Select
+                            name="deliveryMethod"
+                            value={form.deliveryMethod}
+                            onChange={handleChange}
+                            label="Delivery Method"
+                          >
+                            {defaultDeliveryMethods.map(method => (
+                              <MenuItem key={method} value={method}>{method}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      
+                      {/* Delivery Location */}
+                      <Grid item xs={12}>
+                        <TextField
+                          fullWidth
+                          label="Delivery Location"
+                          name="deliveryLocation"
+                          value={form.deliveryLocation}
+                          onChange={handleChange}
+                          margin="normal"
+                          variant="outlined"
+                        />
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+                
+                {/* Items Section */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">Order Items</Typography>
+                      <Button 
+                        variant="outlined" 
+                        startIcon={<AddIcon />}
+                        onClick={addItem}
+                      >
+                        Add Item
+                      </Button>
+                    </Box>
+                    <Divider sx={{ mb: 3 }} />
+                    
+                    {form.items.map((item, idx) => (
+                      <Box key={idx} sx={{ mb: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Grid container spacing={2} alignItems="flex-end">
+                          <Grid item xs={12} sm={4}>
+                            <FormControl fullWidth>
+                              <InputLabel>Product</InputLabel>
+                              <Select
+                                name="itemCode"
+                                value={item.itemCode}
+                                onChange={(e) => handleItemChange(idx, e)}
+                                label="Product"
+                              >
+                                {products.map(product => (
+                                  <MenuItem key={product.SKU} value={product.SKU}>
+                                    {product.name} ({product.SKU})
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={2}>
+                            <TextField
+                              fullWidth
+                              label="Quantity"
+                              name="quantityOrdered"
+                              type="number"
+                              value={item.quantityOrdered}
+                              onChange={(e) => handleItemChange(idx, e)}
+                              InputProps={{ inputProps: { min: 0, step: 1 } }}
+                            />
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={2}>
+                            <FormControl fullWidth>
+                              <InputLabel>UOM</InputLabel>
+                              <Select
+                                name="uom"
+                                value={item.uom}
+                                onChange={(e) => handleItemChange(idx, e)}
+                                label="UOM"
+                              >
+                                {defaultUOM.map(uom => (
+                                  <MenuItem key={uom} value={uom}>{uom}</MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={2}>
+                            <TextField
+                              fullWidth
+                              label="Price"
+                              name="perPiecePrice"
+                              type="number"
+                              value={item.perPiecePrice}
+                              onChange={(e) => handleItemChange(idx, e)}
+                              InputProps={{ inputProps: { min: 0, step: 0.01 } }}
+                            />
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={1}>
+                            <TextField
+                              fullWidth
+                              label="Tax %"
+                              name="tax"
+                              type="number"
+                              value={item.tax}
+                              onChange={(e) => handleItemChange(idx, e)}
+                              InputProps={{ inputProps: { min: 0, max: 100, step: 0.01 } }}
+                            />
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={1}>
+                            <TextField
+                              fullWidth
+                              label="Disc. %"
+                              name="discount"
+                              type="number"
+                              value={item.discount}
+                              onChange={(e) => handleItemChange(idx, e)}
+                              InputProps={{ inputProps: { min: 0, max: 100, step: 0.01 } }}
+                            />
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={2}>
+                            <TextField
+                              fullWidth
+                              label="Total"
+                              name="unitPrice"
+                              value={item.unitPrice || '0.00'}
+                              InputProps={{
+                                readOnly: true,
+                                startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                              }}
+                            />
+                          </Grid>
+                          
+                          <Grid item xs={6} sm={2}>
+                            <IconButton 
+                              color="error" 
+                              onClick={() => removeItem(idx)}
+                              disabled={form.items.length === 1}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </Grid>
+                        </Grid>
+                      </Box>
+                    ))}
+                    
+                    {errors.items && (
+                      <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+                        {errors.items}
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+                
+                {/* Attachments Section */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Attachments</Typography>
+                    <Divider sx={{ mb: 3 }} />
+                    
+                    <input
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                      style={{ display: 'none' }}
+                      id="raised-button-file"
+                      multiple
+                      type="file"
+                      onChange={handleFileUpload}
+                    />
+                    <label htmlFor="raised-button-file">
+                      <Button
+                        variant="outlined"
+                        component="span"
+                        startIcon={<CloudUploadIcon />}
+                        sx={{ mb: 2 }}
+                      >
+                        Upload Files
+                      </Button>
+                    </label>
+                    
+                    {fileList.length > 0 && (
+                      <List dense>
+                        {fileList.map((file, index) => (
+                          <ListItem 
+                            key={index}
+                            secondaryAction={
+                              <IconButton 
+                                edge="end" 
+                                aria-label="delete"
+                                onClick={() => handleRemoveFile(index)}
+                              >
+                                <DeleteForeverIcon color="error" />
+                              </IconButton>
+                            }
+                          >
+                            <ListItemIcon>
+                              <AttachmentIcon />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={file.name}
+                              secondary={formatFileSize(file.size)}
+                            />
+                          </ListItem>
+                        ))}
+                      </List>
+                    )}
+                  </CardContent>
+                </Card>
+                
+                {/* Notes Section */}
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Notes</Typography>
+                    <Divider sx={{ mb: 3 }} />
+                    <TextField
+                      fullWidth
+                      multiline
+                      rows={4}
+                      name="notes"
+                      value={form.notes}
+                      onChange={handleChange}
+                      placeholder="Add any additional notes or instructions..."
+                      variant="outlined"
+                    />
+                  </CardContent>
+                </Card>
+              </Grid>
+              
+              {/* Right Column - Summary */}
+              <Grid item xs={12} lg={3}>
+                {/* Order Summary Card */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Order Summary</Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    
+                    <Grid container spacing={1} sx={{ mb: 2 }}>
+                      <Grid item xs={6}>
+                        <Typography>Subtotal:</Typography>
+                      </Grid>
+                      <Grid item xs={6} textAlign="right">
+                        <Typography>${form.subtotal?.toFixed(2)}</Typography>
+                      </Grid>
+                      
+                      <Grid item xs={6}>
+                        <Typography>Tax:</Typography>
+                      </Grid>
+                      <Grid item xs={6} textAlign="right">
+                        <Typography>${form.taxTotal?.toFixed(2)}</Typography>
+                      </Grid>
+                      
+                      <Grid item xs={6}>
+                        <Typography>Discount:</Typography>
+                      </Grid>
+                      <Grid item xs={6} textAlign="right">
+                        <Typography color="error">-${form.discountTotal?.toFixed(2)}</Typography>
+                      </Grid>
+                      
+                      <Grid item xs={6}>
+                        <Typography>Shipping:</Typography>
+                      </Grid>
+                      <Grid item xs={6} textAlign="right">
+                        <TextField
+                          size="small"
+                          type="number"
+                          name="shippingCharges"
+                          value={form.shippingCharges}
+                          onChange={handleChange}
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                            inputProps: { min: 0, step: 0.01 }
+                          }}
+                          sx={{ maxWidth: 100 }}
+                        />
+                      </Grid>
+                      
+                      <Grid item xs={12} sx={{ my: 1 }}>
+                        <Divider />
+                      </Grid>
+                      
+                      <Grid item xs={6}>
+                        <Typography variant="subtitle1">Total:</Typography>
+                      </Grid>
+                      <Grid item xs={6} textAlign="right">
+                        <Typography variant="h6">${form.grandTotal?.toFixed(2)}</Typography>
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+                
+                {/* Payment Information Card */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>Payment Information</Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    
+                    <Grid container spacing={2}>
+                      <Grid item xs={12}>
+                        <FormControl fullWidth margin="normal" error={!!errors.paymentTerms}>
+                          <InputLabel>Payment Terms *</InputLabel>
+                          <Select
+                            name="paymentTerms"
+                            value={form.paymentTerms}
+                            onChange={handleChange}
+                            label="Payment Terms *"
+                          >
+                            {defaultPaymentTerms.map(term => (
+                              <MenuItem key={term} value={term}>{term}</MenuItem>
+                            ))}
+                          </Select>
+                          {errors.paymentTerms && (
+                            <FormHelperText>{errors.paymentTerms}</FormHelperText>
+                          )}
+                        </FormControl>
+                      </Grid>
+                      
+                      <Grid item xs={12}>
+                        <FormControl fullWidth margin="normal">
+                          <InputLabel>Payment Method</InputLabel>
+                          <Select
+                            name="paymentMethod"
+                            value={form.paymentMethod}
+                            onChange={handleChange}
+                            label="Payment Method"
+                          >
+                            {defaultPaymentMethods.map(method => (
+                              <MenuItem key={method} value={method}>{method}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      
+                      <Grid item xs={12}>
+                        <TextField
+                          fullWidth
+                          label="Advance Amount"
+                          name="advanceAmount"
+                          type="number"
+                          value={form.advanceAmount}
+                          onChange={handleChange}
+                          margin="normal"
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                            inputProps: { min: 0, step: 0.01 }
+                          }}
+                        />
+                      </Grid>
+                      
+                      <Grid item xs={12}>
+                        <TextField
+                          fullWidth
+                          label="Credit Amount"
+                          name="creditAmount"
+                          type="number"
+                          value={form.creditAmount}
+                          onChange={handleChange}
+                          margin="normal"
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                            inputProps: { min: 0, step: 0.01 }
+                          }}
+                        />
+                      </Grid>
+                      
+                      <Grid item xs={12}>
+                        <Divider sx={{ my: 2 }} />
+                        <Grid container spacing={1}>
+                          <Grid item xs={6}>
+                            <Typography>Remaining Balance:</Typography>
+                          </Grid>
+                          <Grid item xs={6} textAlign="right">
+                            <Typography variant="subtitle1">
+                              ${(form.grandTotal - (form.advanceAmount || 0) - (form.creditAmount || 0)).toFixed(2)}
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+                
+                {/* Action Buttons */}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="large"
+                    fullWidth
+                    onClick={() => handleConfirmSubmit(false)}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? 'Processing...' : 'Submit Order'}
+                  </Button>
+                  
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    size="large"
+                    fullWidth
+                    onClick={() => handleConfirmSubmit(true)}
+                    disabled={isSubmitting}
+                  >
+                    Save as Draft
+                  </Button>
+                  
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    size="large"
+                    fullWidth
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to cancel? All unsaved changes will be lost.')) {
+                        // Reset form or navigate away
+                        setForm({
+                          ...initialFormState,
+                          poNumber: generatePONumber()
+                        });
+                        setFileList([]);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                  >
+                    Cancel
+                  </Button>
+                </Box>
+              </Grid>
+            </Grid>
+          </Box>
+        </Paper>
+        
+        {/* Confirmation Dialog */}
+        <Dialog open={confirmOpen} onClose={handleCloseConfirm}>
+          <DialogTitle>Confirm Submission</DialogTitle>
+          <DialogContent>
+            <Typography>Are you sure you want to {submitAction?.name === 'handleSubmit' ? 'submit' : 'save as draft'} this purchase order?</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseConfirm} disabled={isSubmitting}>Cancel</Button>
+            <Button 
+              onClick={submitAction} 
+              color="primary" 
+              variant="contained"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Processing...' : 'Confirm'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        
+        {/* Snackbar for notifications */}
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={6000}
+          onClose={handleCloseSnackbar}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <Alert 
+            onClose={handleCloseSnackbar} 
+            severity={snackbar.severity}
+            sx={{ width: '100%' }}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </Box>
+    </LocalizationProvider>
+  );
+};
+
+export default AdminPurchaseOrder;
