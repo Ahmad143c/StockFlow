@@ -1,10 +1,27 @@
 import axios from 'axios';
 
+// Detect if running in GitHub Codespaces and use the appropriate backend URL
+const getBaseURL = () => {
+  // Check if REACT_APP_API_URL is explicitly set
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+
+  // Check if running in GitHub Codespaces
+  if (window.location.hostname.includes('.app.github.dev')) {
+    // Extract the codespace name and construct the backend URL
+    const codespaceUrl = window.location.hostname;
+    const parts = codespaceUrl.split('-');
+    const codespaceName = parts.slice(0, -1).join('-');
+    return `https://${codespaceName}-5000.app.github.dev`;
+  }
+
+  // Default to local development
+  return '/api';
+};
+
 const API = axios.create({
-  // when running with CRA dev-server, '/api' will be proxied to the backend
-  // by adding "proxy": "http://localhost:5000" to package.json;
-  // otherwise an explicit REACT_APP_API_URL can still override it.
-  baseURL: process.env.REACT_APP_API_URL || '/api',
+  baseURL: getBaseURL(),
 });
 
 // Add response interceptor to handle 401 errors
