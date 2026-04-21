@@ -425,6 +425,8 @@ exports.getAll = async (req, res) => {
     // Add filtering and sorting options
     const { status, vendorId, startDate, endDate, sortBy = 'poDate', sortOrder = 'desc' } = req.query;
     
+    console.log('getAll called with query:', req.query);
+    
     const filter = {};
     if (status) filter.orderStatus = status;
     if (vendorId) filter.vendorId = vendorId;
