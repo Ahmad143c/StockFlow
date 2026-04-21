@@ -43,6 +43,5 @@ app.use('/api/vendors', require('./routes/vendors'));
 app.use('/api/sales', require('./routes/sales'));
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '0.0.0.0';
 
-app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
