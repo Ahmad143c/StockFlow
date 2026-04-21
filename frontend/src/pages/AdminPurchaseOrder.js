@@ -1391,7 +1391,7 @@ const AdminPurchaseOrder = () => {
                           )}
                         </Box>
                         <IconButton
-                          onClick={() => handleDeleteItem(idx)}
+                          onClick={() => removeItem(idx)}
                           color="error"
                           size="small"
                           disabled={form.items.length === 1}
