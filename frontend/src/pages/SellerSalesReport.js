@@ -424,7 +424,7 @@ const SellerSalesReport = () => {
             position: 'relative',
             overflow: 'hidden'
           }}>
-            <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />
+            <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: isSm ? 50 : 60, maxWidth: '100%', objectFit: 'contain', marginRight: 12 }} />
             <Typography
               variant={isSm ? 'h6' : 'h4'}
               color="primary"
