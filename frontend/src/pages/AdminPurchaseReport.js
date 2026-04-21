@@ -1645,7 +1645,11 @@ const AdminPurchaseReport = () => {
     const formData = new FormData();
     formData.append('image', file);
     try {
-      const response = await fetch('http://localhost:5000/api/upload', {
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const apiBaseUrl = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000');
+      const response = await fetch(`${apiBaseUrl}/api/upload`, {
         method:  'POST',
         body:    formData,
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },

@@ -149,7 +149,10 @@ const Header = ({ darkMode = false, setDarkMode = () => {}, user, handleLogout }
     let warrantyPollingInterval;
     let refundPollingInterval;
     if (user && user.role === 'admin') {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const API_URL = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000');
       
       const fetchNewSales = async () => {
         try {
@@ -214,7 +217,10 @@ const Header = ({ darkMode = false, setDarkMode = () => {}, user, handleLogout }
 
     // Polling for warranty notifications (for admins only)
     if (user && user.role === 'admin') {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const API_URL = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000');
       const fetchWarrantyClaims = async () => {
         try {
           const token = localStorage.getItem('token');
@@ -252,7 +258,10 @@ const Header = ({ darkMode = false, setDarkMode = () => {}, user, handleLogout }
 
     // Polling for refund notifications (for admins only)
     if (user && user.role === 'admin') {
-      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const API_URL = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000');
       const fetchRefunds = async () => {
         try {
           const token = localStorage.getItem('token');

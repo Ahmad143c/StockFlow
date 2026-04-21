@@ -104,7 +104,11 @@ const ViewVendors = () => {
   const handleEditSave = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/vendors/${editVendor._id}`, {
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const apiBaseUrl = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000/api');
+      const response = await fetch(`${apiBaseUrl}/vendors/${editVendor._id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -141,7 +145,11 @@ const ViewVendors = () => {
     setDeleteLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/vendors/${deleteVendor._id}`, {
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const apiBaseUrl = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000/api');
+      const response = await fetch(`${apiBaseUrl}/vendors/${deleteVendor._id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -176,8 +184,13 @@ const ViewVendors = () => {
 
     try {
       const token = localStorage.getItem('token');
+      // Detect if running in GitHub Codespace
+      const isCodespace = process.env.CODESPACE_NAME !== undefined;
+      const codespaceUrl = isCodespace ? `https://${process.env.CODESPACE_NAME}-5000.app.github.dev` : null;
+      const apiBaseUrl = process.env.REACT_APP_API_URL || (isCodespace ? codespaceUrl : 'http://localhost:5000/api');
+      
       // Fetch detailed PO data like AdminPurchaseReport.js does
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/purchase-orders?vendorId=${vendor._id}`, {
+      const response = await fetch(`${apiBaseUrl}/purchase-orders?vendorId=${vendor._id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -190,7 +203,7 @@ const ViewVendors = () => {
         const detailedPOs = await Promise.all(
           pos.map(async (po) => {
             try {
-              const detailResponse = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/purchase-orders/${po._id}`, {
+              const detailResponse = await fetch(`${apiBaseUrl}/purchase-orders/${po._id}`, {
                 headers: {
                   'Authorization': `Bearer ${token}`
                 }
