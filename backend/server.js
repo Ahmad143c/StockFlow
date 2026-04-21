@@ -8,7 +8,18 @@ require('dotenv').config();
 const path = require('path');
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+// CORS configuration – allow all origins and handle preflight explicitly
+const corsOptions = {
+  origin: true,             // reflect request origin
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true,        // allow cookies/auth headers if needed
+};
+app.use(cors(corsOptions));
+// express-cors middleware already handles preflight; explicit app.options('*')
+// registration triggers a path-to-regexp error with '*' so we omit it.
+
 app.use(helmet());
 // Serve uploads folder for file viewing
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -17,6 +28,11 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error(err));
 
+
+// basic root endpoint for health-checks / info
+app.get('/', (req, res) => {
+  res.send('StockFlow API is running');
+});
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/products', require('./routes/products'));
