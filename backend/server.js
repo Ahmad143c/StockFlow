@@ -11,7 +11,11 @@ app.use(express.json());
 
 // CORS configuration – allow all origins and handle preflight explicitly
 const corsOptions = {
-  origin: true,             // reflect request origin
+  origin: (origin, callback) => {
+    // Allow all origins including GitHub Codespaces
+    if (!origin) return callback(null, true);
+    return callback(null, true);
+  },
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true,        // allow cookies/auth headers if needed
