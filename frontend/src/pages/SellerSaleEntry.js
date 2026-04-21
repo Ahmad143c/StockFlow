@@ -4,7 +4,7 @@ import { fetchProducts } from '../redux/productsSlice';
 import API from '../api/api';
 import { useDarkMode } from '../context/DarkModeContext';
 import {
-  Box, Paper, Typography, TextField, Button, MenuItem, FormControl, InputLabel, Select, Divider, List, ListItem, ListItemText, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Autocomplete, Chip, Grid, InputAdornment, Tooltip, Checkbox, FormControlLabel
+  Box, Paper, Typography, TextField, Button, MenuItem, FormControl, InputLabel, Select, Divider, List, ListItem, ListItemText, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Autocomplete, Chip, Grid, InputAdornment, Tooltip, Checkbox, FormControlLabel, useTheme, useMediaQuery
 } from '@mui/material';
 
 import EditIcon from '@mui/icons-material/Edit';
@@ -16,6 +16,8 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { generateInvoiceHTML } from '../utils/invoiceUtils';
 
 const SellerSaleEntry = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [products, setProducts] = useState([]);
   const [items, setItems] = useState([
     { productId: '', productName: '', SKU: '', brand: '', quantity: 0, perPiecePrice: 0, discount: 0, subtotal: 0 }
@@ -30,6 +32,7 @@ const SellerSaleEntry = () => {
   const [cashierName, setCashierName] = useState('');
   const [recentSales, setRecentSales] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [cashiers, setCashiers] = useState([]);
   const [editSale, setEditSale] = useState(null);
   const [editForm, setEditForm] = useState({
     cashierName: '',
@@ -40,6 +43,7 @@ const SellerSaleEntry = () => {
     paidAmount: 0,
     customerEmail: '',
     dueDate: '',
+    discountAmount: 0,
     items: []
   });
   const [editPaymentProofFile, setEditPaymentProofFile] = useState(null);
@@ -60,6 +64,7 @@ const SellerSaleEntry = () => {
   const [paymentProofUrl, setPaymentProofUrl] = useState('');
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [printPreviewHtml, setPrintPreviewHtml] = useState('');
+  const [discountAmount, setDiscountAmount] = useState(0);
   const { darkMode } = useDarkMode();
   const previewRef = useRef(null);
 
@@ -134,10 +139,28 @@ const SellerSaleEntry = () => {
         setCustomers([]);
       }
     };
+    const fetchCashiers = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        // fetch recent sales (up to 200) and derive unique cashiers
+        const res = await API.get(`/sales?sellerId=${payload.id}&limit=200`, { headers: { Authorization: `Bearer ${token}` } });
+        const sales = Array.isArray(res.data) ? res.data : [];
+        const setC = new Set();
+        sales.forEach(s => {
+          const name = (s.cashierName || '').trim();
+          if (name) setC.add(name);
+        });
+        setCashiers(Array.from(setC).sort());
+      } catch (e) {
+        setCashiers([]);
+      }
+    };
     fetchProducts();
     fetchSales();
     fetchCustomers();
-    const onChanged = () => { fetchSales(); fetchCustomers(); };
+    fetchCashiers();
+    const onChanged = () => { fetchSales(); fetchCustomers(); fetchCashiers(); };
     window.addEventListener('sales:changed', onChanged);
     return () => window.removeEventListener('sales:changed', onChanged);
   }, []);
@@ -161,6 +184,12 @@ const SellerSaleEntry = () => {
   }, []);
 
   // Handle item change (product, qty, price, disc)
+  const findProductBySKU = (sku) => {
+    if (!sku || !products.length) return null;
+    const normalized = String(sku).trim().toLowerCase();
+    return products.find(p => p?.SKU && String(p.SKU).trim().toLowerCase() === normalized);
+  };
+
   const handleItemChange = (idx, name, value) => {
     const newItems = [...items];
     if (name === 'brand') {
@@ -203,6 +232,27 @@ const SellerSaleEntry = () => {
           subtotal: 0
         };
       }
+    } else if (name === 'SKU') {
+      const enteredSKU = String(value || '').trim();
+      const prod = findProductBySKU(enteredSKU);
+      if (prod) {
+        newItems[idx] = {
+          ...newItems[idx],
+          productId: prod._id,
+          productName: prod.name,
+          SKU: prod.SKU,
+          brand: prod.brand || newItems[idx].brand || '',
+          perPiecePrice: Number(prod.sellingPerPiece) || newItems[idx].perPiecePrice || 0,
+          quantity: Number(newItems[idx].quantity) || 1,
+          discount: Number(newItems[idx].discount) || 0,
+          subtotal: ((Number(prod.sellingPerPiece) || 0) * (Number(newItems[idx].quantity) || 1)) - (Number(newItems[idx].discount) || 0)
+        };
+      } else {
+        newItems[idx] = {
+          ...newItems[idx],
+          SKU: enteredSKU
+        };
+      }
     } else {
       if (name === 'quantity') {
         // Prevent selling more than available stock in pieces
@@ -236,7 +286,7 @@ const SellerSaleEntry = () => {
 
   const totalAmount = items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) || 0), 0);
   const discountTotal = items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
-  const netAmount = Math.max(0, totalAmount - discountTotal);
+  const netAmount = Math.max(0, totalAmount - discountTotal - Number(discountAmount || 0));
   const totalQuantity = items.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
 
   useEffect(() => {
@@ -322,6 +372,7 @@ const SellerSaleEntry = () => {
         customerName,
         customerContact,
         customerEmail,
+        discountAmount: Number(discountAmount) || 0,
         paidAmount: effectivePaid,
         dueDate: dueDate || '',
         paymentMethod,
@@ -332,29 +383,29 @@ const SellerSaleEntry = () => {
       }, { headers: { Authorization: `Bearer ${token}` } });
       const saved = res.data;
       setSuccess('Sale recorded!');
-      
+
       // Reset form immediately
-      window.dispatchEvent(new CustomEvent('products:changed')); 
+      window.dispatchEvent(new CustomEvent('products:changed'));
       setItems([{ productId: '', productName: '', SKU: '', brand: '', quantity: 0, perPiecePrice: 0, discount: 0, subtotal: 0 }]);
       setCustomerName(''); setCustomerContact(''); setCustomerEmail(''); setCashierName('');
       setPaymentMethod('Cash'); setPaymentStatus('Unpaid'); setPaidAmount(0); setChangeAmount(0); setPaymentProofFile(null); setPaymentProofUrl('');
-      setReceivedAmount(0); setDueDate('');
+      setReceivedAmount(0); setDueDate(''); setDiscountAmount(0);
 
       // Run background operations without awaiting them
       // 1. Refresh products
       dispatch(fetchProducts()).catch(e => console.error('Failed to refresh products:', e));
-      
+
       // 2. Notify other tabs and in-page listeners
       try {
         const notif = { id: saved._id, sellerName: payload.username, cashierName: cashierName || payload.username, invoiceNumber: saved._id?.substr(-6), createdAt: saved.createdAt || Date.now(), ts: Date.now(), type: 'created', totalItems: Number(totalQuantity) || 0 };
         try { notifySale(notif); } catch (e) { /* continue */ }
         try { window.dispatchEvent(new CustomEvent('sales:latest', { detail: notif })); } catch (e) { }
       } catch (e) { }
-      
+
       // 3. Dispatch custom events
       window.dispatchEvent(new CustomEvent('sales:changed', { detail: { id: saved._id } }));
       try { localStorage.setItem('sales:changed', String(Date.now())); } catch (e) { }
-      
+
       // 4. Refresh recent sales in background (non-blocking)
       (async () => {
         try {
@@ -377,7 +428,9 @@ const SellerSaleEntry = () => {
     e.preventDefault();
     const saved = await saveSale();
     if (saved) {
-      window.location.reload();
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
     }
   };
 
@@ -386,17 +439,17 @@ const SellerSaleEntry = () => {
     if (!saved) return;
     const invoice = saved;
     const printContent = generateInvoiceHTML(invoice, products);
-    
+
     const w = window.open('', '_blank');
     if (!w || !w.document) {
       // Popup blocked — open in-app print preview
       setPrintPreviewHtml(printContent);
-      
+
       setPrintPreviewOpen(true);
-      // refresh the page shortly after showing preview
+      // refresh the page after 5 seconds
       setTimeout(() => {
         window.location.reload();
-      }, 1000);
+      }, 5000);
       return;
     }
     // output generated HTML directly (it already includes its own styles)
@@ -404,10 +457,10 @@ const SellerSaleEntry = () => {
     w.document.close();
     setTimeout(() => {
       w.print();
-      // refresh the current page shortly after triggering print
+      // refresh the current page after 5 seconds
       setTimeout(() => {
         window.location.reload();
-      }, 500);
+      }, 5000);
     }, 250);
   };
 
@@ -437,6 +490,7 @@ const SellerSaleEntry = () => {
       paymentMethod: sale.paymentMethod || 'Cash',
       paymentStatus: sale.paymentStatus || 'Unpaid',
       paidAmount: sale.paidAmount ?? 0,
+      discountAmount: sale.discountAmount ?? 0,
       items: mappedItems
     });
     setEditPaymentProofFile(null);
@@ -481,6 +535,27 @@ const SellerSaleEntry = () => {
           quantity: newItems[idx].quantity || 0,
           discount: newItems[idx].discount || 0,
           subtotal: (newItems[idx].perPiecePrice || 0) * (newItems[idx].quantity || 0) - (newItems[idx].discount || 0)
+        };
+      }
+    } else if (name === 'SKU') {
+      const enteredSKU = String(value || '').trim();
+      const prod = findProductBySKU(enteredSKU);
+      if (prod) {
+        newItems[idx] = {
+          ...newItems[idx],
+          productId: prod._id,
+          productName: prod.name,
+          SKU: prod.SKU,
+          brand: prod.brand || newItems[idx].brand || '',
+          perPiecePrice: Number(prod.sellingPerPiece) || newItems[idx].perPiecePrice || 0,
+          quantity: Number(newItems[idx].quantity) || 1,
+          discount: Number(newItems[idx].discount) || 0,
+          subtotal: ((Number(prod.sellingPerPiece) || 0) * (Number(newItems[idx].quantity) || 1)) - (Number(newItems[idx].discount) || 0)
+        };
+      } else {
+        newItems[idx] = {
+          ...newItems[idx],
+          SKU: enteredSKU
         };
       }
     } else {
@@ -528,7 +603,10 @@ const SellerSaleEntry = () => {
       } else if (editForm.paymentMethod === 'Cash') {
         proofUrl = ''; // Clear proof URL if changing to Cash
       }
-      const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0);
+      const itemDiscounts = editForm.items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
+      const globalDiscount = Number(editForm.discountAmount || 0);
+      const totalDiscountAmount = itemDiscounts + globalDiscount;
+      const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0) - globalDiscount;
       const editChangeAmount = Math.max(0, (Number(editForm.paidAmount) || 0) - editNetAmount);
       if (!Array.isArray(editForm.items) || editForm.items.length === 0) { setError('Add at least one item'); return; }
       if (editForm.items.some(it => !(it.productId || it.SKU))) { setError('Please select a product for each item'); return; }
@@ -537,6 +615,7 @@ const SellerSaleEntry = () => {
 
       await API.put(`/sales/${editSale._id}`, {
         ...editForm,
+        discountAmount: totalDiscountAmount,
         netAmount: editNetAmount,
         cashAmount: editForm.paymentMethod === 'Cash' ? Number(editForm.paidAmount) || 0 : 0,
         changeAmount: editChangeAmount,
@@ -545,7 +624,7 @@ const SellerSaleEntry = () => {
         edited: true
       }, { headers: { Authorization: `Bearer ${token}` } });
       setEditSale(null);
-      setEditForm({ cashierName: '', customerName: '', customerContact: '', paymentMethod: 'Cash', paymentStatus: 'Unpaid', paidAmount: 0, items: [] });
+      setEditForm({ cashierName: '', customerName: '', customerContact: '', paymentMethod: 'Cash', paymentStatus: 'Unpaid', paidAmount: 0, discountAmount: 0, items: [] });
       setEditPaymentProofFile(null);
       // notify other windows and the admin header about the update
       try {
@@ -634,8 +713,8 @@ const SellerSaleEntry = () => {
   };
 
   return (
-    <Box sx={{ mx: 'auto', px: {  md: 2 }, mb: 4 }}>
-      <Paper elevation={8} sx={{ p: 4, borderRadius: 3, background: darkMode ? 'linear-gradient(to bottom, #1e1e1e 0%, #121212 100%)' : 'linear-gradient(to bottom, #f8f9fa 0%, #ffffff 100%)' }}>
+    <Box sx={{ mx: 'auto', px: { md: 2 }, mb: 4 }}>
+      <Paper elevation={8} sx={{ p: 2, borderRadius: 3, background: darkMode ? 'linear-gradient(to bottom, #1e1e1e 0%, #121212 100%)' : 'linear-gradient(to bottom, #f8f9fa 0%, #ffffff 100%)' }}>
         <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', mb: 3, pb: 2, borderBottom: `2px solid ${darkMode ? '#2a2a2a' : '#e0e0e0'}` }}>
           <Box>
             <Typography variant="h4" color="primary" sx={{ fontWeight: 700, mb: 0.5 }}>Point of Sale</Typography>
@@ -662,10 +741,10 @@ const SellerSaleEntry = () => {
         )}
 
         <form onSubmit={handleSubmit}>
-          <Grid container spacing={3}>
+          <Grid container>
             {/* Items Section */}
-            <Grid xs={12} md={6} lg={3} sx={{ display: 'flex' }}>
-              <Paper elevation={3} sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
+            <Grid item xs={12} sx={{ display: 'flex' }}>
+              <Paper elevation={3} sx={{ p: 2, width: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Typography variant="h6" sx={{ mb: 3, color: 'primary.main', fontWeight: 600 }}>
                   Sale Items
                 </Typography>
@@ -687,7 +766,7 @@ const SellerSaleEntry = () => {
                     warrantyExpiry = d;
                   }
                   return (
-                    <Box key={idx} sx={{ mb: 3, p: 2.5, border: `1px solid ${darkMode ? '#2a2a2a' : '#e0e0e0'}`, borderRadius: 2, bgcolor: darkMode ? '#1e1e1e' : '#ffffff' }}>
+                    <Box key={idx} sx={{ mb: 3, p: 1, border: `1px solid ${darkMode ? '#2a2a2a' : '#e0e0e0'}`, borderRadius: 2, bgcolor: darkMode ? '#1e1e1e' : '#ffffff' }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                         <Chip label={`Item ${idx + 1}`} size="small" color="primary" />
                         {itemSubtotal > 0 && (
@@ -696,8 +775,25 @@ const SellerSaleEntry = () => {
                           </Typography>
                         )}
                       </Box>
+                      
                       <Grid container spacing={2}>
-                        <Grid xs={12} sm={6} md={3}>
+                        <Grid item xs={12} sm={6} md={2}>
+                          <TextField
+                            label="SKU / Barcode"
+                            value={item.SKU || ''}
+                            onChange={e => handleItemChange(idx, 'SKU', e.target.value)}
+                            onBlur={e => handleItemChange(idx, 'SKU', e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleItemChange(idx, 'SKU', e.target.value);
+                              }
+                            }}
+                            helperText="Enter SKU or scan barcode to auto-populate product"
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2}>
                           <FormControl fullWidth>
                             <InputLabel>Brand</InputLabel>
                             <Select
@@ -710,7 +806,7 @@ const SellerSaleEntry = () => {
                             </Select>
                           </FormControl>
                         </Grid>
-                        <Grid xs={12} sm={6} md={5}>
+                        <Grid item xs={12} sm={6} md={2}>
                           <Autocomplete
                             options={sortedProductsByBrandFor(item.brand, products)}
                             getOptionLabel={(option) => option?.name ? `${option.name} (${option.SKU})` : ''}
@@ -720,7 +816,7 @@ const SellerSaleEntry = () => {
                             fullWidth
                           />
                         </Grid>
-                        <Grid xs={12} sm={6} md={2}>
+                        <Grid item xs={12} sm={6} md={2}>
                           <TextField
                             label="Quantity"
                             type="number"
@@ -737,9 +833,9 @@ const SellerSaleEntry = () => {
                             required
                             sx={{
                               '& input[type=number]': {
-                                MozAppearance: 'textfield',
+                                '-moz-appearance': 'textfield',
                                 '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                  WebkitAppearance: 'none',
+                                  '-webkit-appearance': 'none',
                                   margin: 0,
                                 },
                               },
@@ -747,7 +843,7 @@ const SellerSaleEntry = () => {
                           />
 
                         </Grid>
-                        <Grid xs={12} sm={6} md={2}>
+                        <Grid item xs={12} sm={6} md={2}>
                           {(() => {
                             const suggested = prod ? (Number(prod.sellingPerPiece) || 0) : 0;
                             const priceVal = Number(item.perPiecePrice) || 0;
@@ -762,6 +858,7 @@ const SellerSaleEntry = () => {
                                 }
                                 onWheel={(e) => e.target.blur()}   // 👈 key line
                                 fullWidth
+                                required
                                 error={isBelow}
                                 helperText={
                                   isBelow ? `Below suggested selling price Rs. ${suggested}` : ''
@@ -784,9 +881,9 @@ const SellerSaleEntry = () => {
                                 }}
                                 sx={{
                                   '& input[type=number]': {
-                                    MozAppearance: 'textfield',
+                                    '-moz-appearance': 'textfield',
                                     '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                      WebkitAppearance: 'none',
+                                      '-webkit-appearance': 'none',
                                       margin: 0,
                                     },
                                   },
@@ -795,7 +892,7 @@ const SellerSaleEntry = () => {
                             );
                           })()}
                         </Grid>
-                        <Grid xs={12} sm={6} md={2}>
+                        <Grid item xs={12} sm={6} md={1}>
                           <TextField
                             label="Discount"
                             type="number"
@@ -816,9 +913,9 @@ const SellerSaleEntry = () => {
                             }}
                             sx={{
                               '& input[type=number]': {
-                                MozAppearance: 'textfield',
+                                '-moz-appearance': 'textfield',
                                 '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                  WebkitAppearance: 'none',
+                                  '-webkit-appearance': 'none',
                                   margin: 0,
                                 },
                               },
@@ -826,7 +923,7 @@ const SellerSaleEntry = () => {
                           />
 
                         </Grid>
-                        <Grid xs={12} sm={6} md={1}>
+                        <Grid item xs={12} sm={6} md={1}>
                           <Button
                             color="error"
                             variant="outlined"
@@ -837,27 +934,27 @@ const SellerSaleEntry = () => {
                             ×
                           </Button>
                         </Grid>
-                    {prod && (
-                          <Grid xs={12}>
-                            <Box sx={{ p: 1.5, bgcolor: darkMode ? '#1a3a52' : '#e3f2fd', borderRadius: 1 }}>
+                        {prod && (
+                          <Grid item xs={12} >
+                            <Box sx={{ p: 1.5, mt: 1, ml: 1.5, bgcolor: darkMode ? '#1a3a52' : '#e3f2fd', borderRadius: 1 }}>
                               <Typography variant="body2" sx={{ fontWeight: 500, color: 'text.primary' }}>
                                 📦 Stock: Total Pieces {totalPcs} (Cart: {ppc > 0 ? Math.floor(totalPcs / ppc) : 0}, Lose: {ppc > 0 ? (totalPcs % ppc) : totalPcs})
                                 {qty > 0 && ` → After Sale: Remaining ${remaining} (Cart: ${ppc > 0 ? Math.floor(remaining / ppc) : 0}, Lose: ${ppc > 0 ? (remaining % ppc) : remaining})`}
                               </Typography>
-                          {warrantyMonths > 0 && warrantyExpiry && (
-                            <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                              🛡 Warranty:{' '}
-                              {warrantyMonths >= 12
-                                ? `${(warrantyMonths / 12).toFixed(1).replace(/\.0$/, '')} Year(s)`
-                                : `${warrantyMonths} Month(s)`}{' '}
-                              (Valid until {warrantyExpiry.toLocaleDateString()})
-                            </Typography>
-                          )}
-                          {warrantyMonths <= 0 && (
-                            <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                              🛡 Warranty: No Warranty
-                            </Typography>
-                          )}
+                              {warrantyMonths > 0 && warrantyExpiry && (
+                                <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                                  🛡 Warranty:{' '}
+                                  {warrantyMonths >= 12
+                                    ? `${(warrantyMonths / 12).toFixed(1).replace(/\.0$/, '')} Year(s)`
+                                    : `${warrantyMonths} Month(s)`}{' '}
+                                  (Valid until {warrantyExpiry.toLocaleDateString()})
+                                </Typography>
+                              )}
+                              {warrantyMonths <= 0 && (
+                                <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                                  🛡 Warranty: No Warranty
+                                </Typography>
+                              )}
                             </Box>
                           </Grid>
                         )}
@@ -877,26 +974,27 @@ const SellerSaleEntry = () => {
             </Grid>
 
             {/* Customer Information Section */}
-            <Grid xs={12} md={6} lg={3} sx={{ display: 'flex' }}>
+            <Grid item xs={12} my={3}>
               <Paper elevation={3} sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Typography variant="h6" sx={{ mb: 3, color: 'primary.main', fontWeight: 600 }}>
                   Customer Information
                 </Typography>
                 <Grid container spacing={2}>
-                  <Grid xs={12} sm={6} md={4}>
-                    <TextField
-                      label="Cashier Name"
-                      value={cashierName ?? ''}
-                      onChange={e => setCashierName(e.target.value)}
-                      fullWidth
-                      required
+                  <Grid item xs={12} sm={6} md={2}>
+                    <Autocomplete
+                      freeSolo
+                      options={cashiers}
+                      value={cashierName || ''}
+                      onChange={(_, val) => setCashierName(val || '')}
+                      onInputChange={(_, val) => setCashierName(val || '')}
+                      renderInput={(params) => <TextField {...params} label="Cashier Name" fullWidth required />}
                     />
                   </Grid>
-                  <Grid xs={12} sm={6} md={4}>
+                  <Grid item xs={12} sm={6} md={2}>
                     <Autocomplete
                       freeSolo
                       options={customers.map(c => c.name)}
-                      value={customerName}
+                      value={customerName || ''}
                       onChange={(_, val) => {
                         const name = val || '';
                         setCustomerName(name);
@@ -919,7 +1017,7 @@ const SellerSaleEntry = () => {
                       renderInput={(params) => <TextField {...params} label="Customer Name" fullWidth />}
                     />
                   </Grid>
-                  <Grid xs={12} sm={6} md={4}>
+                  <Grid item xs={12} sm={6} md={3}>
                     <TextField
                       label="Customer Contact"
                       value={customerContact ?? ''}
@@ -927,7 +1025,7 @@ const SellerSaleEntry = () => {
                       fullWidth
                     />
                   </Grid>
-                  <Grid xs={12} sm={6} md={4}>
+                  <Grid item xs={12} sm={6} md={3}>
                     <TextField
                       label="Customer Email"
                       type="email"
@@ -940,13 +1038,13 @@ const SellerSaleEntry = () => {
               </Paper>
             </Grid>
             {/* Payment Information Section */}
-            <Grid xs={12} md={6} lg={3} sx={{ display: 'flex' }}>
+            <Grid item xs={12} my={3}>
               <Paper elevation={3} sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Typography variant="h6" sx={{ mb: 3, color: 'primary.main', fontWeight: 600 }}>
                   Payment Information
                 </Typography>
                 <Grid container spacing={2}>
-                  <Grid xs={12} sm={6} md={6}>
+                  <Grid item xs={12} sm={6} md={2}>
                     <FormControl fullWidth>
                       <InputLabel>Payment Method</InputLabel>
                       <Select
@@ -962,7 +1060,7 @@ const SellerSaleEntry = () => {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid xs={12} sm={6} md={6}>
+                  <Grid item xs={12} sm={6} md={2}>
                     <FormControl fullWidth>
                       <InputLabel>Payment Status</InputLabel>
                       <Select
@@ -977,9 +1075,10 @@ const SellerSaleEntry = () => {
                       </Select>
                     </FormControl>
                   </Grid>
+                  
                   {paymentStatus === 'Partial Paid' ? (
                     <>
-                      <Grid xs={12} sm={6} md={4}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <TextField
                           label="Received Payment"
                           type="number"
@@ -1004,7 +1103,7 @@ const SellerSaleEntry = () => {
                         />
 
                       </Grid>
-                      <Grid xs={12} sm={6} md={4}>
+                      <Grid item xs={12} sm={6} md={2}>
                         <TextField
                           label="Remaining Payment"
                           value={(Math.max(0, netAmount - (Number(receivedAmount) || 0))).toLocaleString()}
@@ -1014,7 +1113,7 @@ const SellerSaleEntry = () => {
                       </Grid>
                     </>
                   ) : paymentStatus === 'Credit' ? (
-                    <Grid xs={12} sm={6} md={4}>
+                    <Grid item xs={12} sm={6} md={4}>
                       <TextField
                         label="Due Date"
                         type="date"
@@ -1025,7 +1124,7 @@ const SellerSaleEntry = () => {
                       />
                     </Grid>
                   ) : (
-                    <Grid xs={12} sm={6} md={4}>
+                    <Grid item xs={12} sm={6} md={3}>
                       {(() => {
                         const paid = Number(paidAmount || 0);
                         const total = Number(netAmount || 0);
@@ -1038,6 +1137,7 @@ const SellerSaleEntry = () => {
                             value={paidAmount || ''}
                             onChange={(e) => setPaidAmount(e.target.value)}
                             fullWidth
+                            required
                             error={showInsufficient}
                             helperText={helper}
                             InputProps={{
@@ -1048,9 +1148,9 @@ const SellerSaleEntry = () => {
                             }}
                             sx={{
                               '& input[type=number]': {
-                                MozAppearance: 'textfield',
+                                '-moz-appearance': 'textfield',
                                 '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                  WebkitAppearance: 'none',
+                                  '-webkit-appearance': 'none',
                                   margin: 0,
                                 },
                               },
@@ -1060,7 +1160,31 @@ const SellerSaleEntry = () => {
                       })()}
                     </Grid>
                   )}
-                  <Grid xs={12} sm={6} md={4}>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      label="Discount Amount"
+                      type="number"
+                      value={discountAmount || ''}
+                      onChange={(e) => setDiscountAmount(e.target.value)}
+                      fullWidth
+                      InputProps={{
+                        inputProps: {
+                          onWheel: (e) => e.target.blur(),
+                          min: 0,
+                        },
+                      }}
+                      sx={{
+                        '& input[type=number]': {
+                          MozAppearance: 'textfield',
+                          '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
+                            WebkitAppearance: 'none',
+                            margin: 0,
+                          },
+                        },
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={2}>
                     <TextField
                       label="Change"
                       value={changeAmount.toLocaleString()}
@@ -1073,8 +1197,9 @@ const SellerSaleEntry = () => {
                       }}
                     />
                   </Grid>
+
                   {paymentMethod !== 'Cash' && (
-                    <Grid xs={12} sm={6} md={4}>
+                    <Grid item xs={12} sm={6} md={4}>
                       <Button
                         variant="outlined"
                         component="label"
@@ -1126,13 +1251,13 @@ const SellerSaleEntry = () => {
             </Grid>
 
             {/* Summary Section */}
-            <Grid xs={12} md={6} lg={3} sx={{ display: 'flex' }}>
+            <Grid item xs={12} my={1}>
               <Paper elevation={3} sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Typography variant="h6" sx={{ mb: 3, color: 'primary.main', fontWeight: 600 }}>
                   Sale Summary
                 </Typography>
                 <Grid container spacing={3}>
-                  <Grid xs={12} md={4}>
+                  <Grid item xs={12} md={4} px={1}>
                     <Box sx={{ p: 2, bgcolor: darkMode ? '#1a3a52' : '#e3f2fd', borderRadius: 2, textAlign: 'center' }}>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                         Total Quantity
@@ -1142,17 +1267,17 @@ const SellerSaleEntry = () => {
                       </Typography>
                     </Box>
                   </Grid>
-                  <Grid xs={12} md={4}>
+                  <Grid item xs={12} md={4} px={1}>
                     <Box sx={{ p: 2, bgcolor: darkMode ? '#4a3728' : '#fff3e0', borderRadius: 2, textAlign: 'center' }}>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                         Total Discount
                       </Typography>
                       <Typography variant="h5" sx={{ fontWeight: 700, color: 'warning.main' }}>
-                        Rs. {discountTotal.toLocaleString()}
+                        Rs. {(discountTotal + Number(discountAmount || 0)).toLocaleString()}
                       </Typography>
                     </Box>
                   </Grid>
-                  <Grid xs={12} md={4}>
+                  <Grid item xs={12} md={4} px={1}>
                     <Box sx={{ p: 2, bgcolor: darkMode ? '#1b5e20' : '#e8f5e9', borderRadius: 2, textAlign: 'center' }}>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                         Net Amount
@@ -1167,7 +1292,7 @@ const SellerSaleEntry = () => {
             </Grid>
 
             {/* Action Buttons */}
-            <Grid xs={12}>
+            <Grid item xs={12}>
               <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', mt: 2 }}>
                 <Button
                   onClick={handleSaveAndPrint}
@@ -1213,7 +1338,7 @@ const SellerSaleEntry = () => {
                       boxShadow: 2
                     }
                   }}
-                  secondaryAction={
+                  secondaryAction={!isMobile ? (
                     <Box sx={{ display: 'flex', gap: 1 }}>
                       <IconButton edge="end" aria-label="print" size="small" color="primary" onClick={(e) => {
                         e.stopPropagation();
@@ -1235,7 +1360,7 @@ const SellerSaleEntry = () => {
                         <EmailIcon fontSize="small" />
                       </IconButton>
                     </Box>
-                  }>
+                  ) : null}>
 
                   <ListItemText
                     primary={
@@ -1310,7 +1435,13 @@ const SellerSaleEntry = () => {
                             </Tooltip>
                           );
                         })()}
-                        {s.edited && <Chip label="Edited" size="small" color="primary" sx={{ height: 22 }} />}
+                        {/* Check if sale has refunds or warranty claims */}
+                        {(() => {
+                          const hasRefunds = (s.refunds || []).length > 0;
+                          const hasWarrantyClaims = (s.warrantyClaims || []).length > 0;
+                          const isEdited = s.edited || hasRefunds || hasWarrantyClaims;
+                          return isEdited && <Chip label="Edited" size="small" color="primary" sx={{ height: 22 }} />;
+                        })()}
                         {/* Email status indicator */}
                         {s.emailStatus === 'sent' && (
                           <Chip label="✉ Sent" size="small" sx={{ height: 22, bgcolor: darkMode ? '#388e3c' : '#4caf50', color: 'white' }} />
@@ -1326,21 +1457,43 @@ const SellerSaleEntry = () => {
                     secondary={
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                         {s.items.map(i => {
-                        const origQty = Number(i.quantity) || 0;
-                        let refunded = 0;
-                        (s.refunds || []).forEach(r => {
-                          (r.items || []).forEach(it => {
-                            if (String(it.productId) === String(i.productId)) {
-                              refunded += Number(it.quantity) || 0;
-                            }
+                          const origQty = Number(i.quantity) || 0;
+                          let refunded = 0;
+                          (s.refunds || []).forEach(r => {
+                            (r.items || []).forEach(it => {
+                              if (String(it.productId) === String(i.productId)) {
+                                refunded += Number(it.quantity) || 0;
+                              }
+                            });
                           });
-                        });
-                        const remaining = origQty - refunded;
-                        return `${i.productName} x${remaining}${refunded ? ` (-${refunded} ref)` : ''}`;
-                      }).join(', ')}
+                          const remaining = origQty - refunded;
+                          return `${i.productName} x${remaining}${refunded ? ` (-${refunded} ref)` : ''}`;
+                        }).join(', ')}
                       </Typography>
                     }
                   />
+                  {isMobile && (
+                    <Box sx={{ display: 'flex', gap: 1, mt: 1, justifyContent: 'flex-end' }}>
+                      <IconButton aria-label="print" size="small" color="primary" onClick={(e) => {
+                        e.stopPropagation();
+                        const printContent = generateInvoiceHTML(s, products);
+                        const w = window.open('', '_blank');
+                        if (!w || !w.document) {
+                          setError('Popup blocked. Please allow popups for this site to print the invoice.');
+                          return;
+                        }
+                        w.document.write(printContent);
+                        w.document.close();
+                        setTimeout(() => w.print(), 250);
+                      }}>
+                        <PrintIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton aria-label="edit" size="small" color="primary" onClick={(e) => { e.currentTarget.blur(); openEdit(s); }}><EditIcon fontSize="small" /></IconButton>
+                      <IconButton aria-label="resend-email" size="small" color="primary" onClick={(e) => { e.stopPropagation(); handleResendEmail(s); }}>
+                        <EmailIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )}
                 </ListItem>
               ))}
               {recentSales.length === 0 && (
@@ -1353,23 +1506,60 @@ const SellerSaleEntry = () => {
           <Dialog open={!!editSale} onClose={() => setEditSale(null)} maxWidth="xl" fullWidth>
             <DialogTitle sx={{ bgcolor: 'primary.main', color: 'white', display: 'flex', alignItems: 'center' }}>
               <Typography variant="h5" component="div" sx={{ flexGrow: 1 }}>Edit Sale</Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Tooltip title="Print Invoice">
+                  <IconButton
+                    onClick={async () => {
+                      if (!editSale) return;
+                      // First save the changes
+                      await saveEdit();
+                      // Then print the invoice
+                      const html = generateInvoiceHTML(editSale, products);
+                      const w = window.open('', '_blank');
+                      if (!w || !w.document) { alert('Popup blocked. Please allow popups or use the browser print.'); return; }
+                      w.document.write(html);
+                      w.document.close();
+                      setTimeout(() => w.print(), 250);
+                    }}
+                    sx={{ color: 'white' }}
+                  >
+                    <PrintIcon />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Send Email">
+                  <IconButton
+                    onClick={async () => {
+                      if (!editSale) return;
+                      // First save the changes
+                      await saveEdit();
+                      // Then send the email
+                      handleResendEmail(editSale);
+                    }}
+                    sx={{ color: 'white' }}
+                  >
+                    <EmailIcon />
+                  </IconButton>
+                </Tooltip>
+              </Box>
             </DialogTitle>
             <DialogContent sx={{ p: 3 }}>
-              <Grid container spacing={3}>
+              <Grid container spacing={1}>
                 {/* Basic Information Section */}
                 <Grid sx={{ width: { xs: '100%' }, mt: '20px' }}>
                   <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: darkMode ? '#1e1e1e' : '#f8f9fa' }}>
                     <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Basic Information</Typography>
                     <Grid container spacing={2}>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
-                        <TextField
-                          fullWidth
-                          label="Cashier Name"
-                          value={editForm.cashierName}
-                          onChange={e => setEditForm({ ...editForm, cashierName: e.target.value })}
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Autocomplete
+                          freeSolo
+                          options={cashiers}
+                          value={editForm.cashierName || ''}
+                          onChange={(_, val) => setEditForm({ ...editForm, cashierName: val || '' })}
+                          onInputChange={(_, val) => setEditForm({ ...editForm, cashierName: val || '' })}
+                          renderInput={(params) => <TextField {...params} label="Cashier Name" fullWidth />}
                         />
                       </Grid>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <Autocomplete
                           freeSolo
                           options={customers.map(c => c.name)}
@@ -1392,20 +1582,20 @@ const SellerSaleEntry = () => {
                           renderInput={(params) => <TextField {...params} label="Customer Name" fullWidth />}
                         />
                       </Grid>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <TextField
                           fullWidth
                           label="Customer Contact"
-                          value={editForm.customerContact}
+                          value={editForm.customerContact || ''}
                           onChange={e => setEditForm({ ...editForm, customerContact: e.target.value })}
                         />
                       </Grid>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <TextField
                           fullWidth
                           label="Customer Email"
                           type="email"
-                          value={editForm.customerEmail}
+                          value={editForm.customerEmail || ''}
                           onChange={e => setEditForm({ ...editForm, customerEmail: e.target.value })}
                         />
                       </Grid>
@@ -1418,11 +1608,11 @@ const SellerSaleEntry = () => {
                   <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: darkMode ? '#1e1e1e' : '#f8f9fa' }}>
                     <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Payment Information</Typography>
                     <Grid container spacing={2}>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <FormControl fullWidth>
                           <InputLabel>Payment Method</InputLabel>
                           <Select
-                            value={editForm.paymentMethod}
+                            value={editForm.paymentMethod || 'Cash'}
                             onChange={e => setEditForm({ ...editForm, paymentMethod: e.target.value })}
                             label="Payment Method"
                           >
@@ -1434,11 +1624,11 @@ const SellerSaleEntry = () => {
                           </Select>
                         </FormControl>
                       </Grid>
-                      <Grid sx={{ width: { xs: '45%', md: '20%' } }}>
+                      <Grid item xs={12} sm={6} md={3}>
                         <FormControl fullWidth>
                           <InputLabel>Payment Status</InputLabel>
                           <Select
-                            value={editForm.paymentStatus}
+                            value={editForm.paymentStatus || 'Unpaid'}
                             onChange={e => setEditForm({ ...editForm, paymentStatus: e.target.value })}
                             label="Payment Status"
                           >
@@ -1451,7 +1641,7 @@ const SellerSaleEntry = () => {
                       </Grid>
                       {editForm.paymentStatus === 'Partial Paid' ? (
                         <>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
                             <TextField
                               fullWidth
                               label="Received Payment"
@@ -1477,21 +1667,47 @@ const SellerSaleEntry = () => {
                               }}
                             />
                           </Grid>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
                             <TextField
                               fullWidth
                               label="Remaining Payment"
                               value={(() => {
-                                const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0);
+                                const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0) - Number(editForm.discountAmount || 0);
                                 return (Math.max(0, editNetAmount - (Number(editForm.paidAmount) || 0))).toLocaleString();
                               })()}
                               InputProps={{ readOnly: true }}
                             />
                           </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <TextField
+                              fullWidth
+                              label="Discount Amount"
+                              type="number"
+                              value={editForm.discountAmount || ''}
+                              onChange={(e) =>
+                                setEditForm({ ...editForm, discountAmount: e.target.value })
+                              }
+                              InputProps={{
+                                inputProps: {
+                                  onWheel: (e) => e.target.blur(),
+                                  min: 0,
+                                },
+                              }}
+                              sx={{
+                                '& input[type=number]': {
+                                  MozAppearance: 'textfield',
+                                  '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
+                                    WebkitAppearance: 'none',
+                                    margin: 0,
+                                  },
+                                },
+                              }}
+                            />
+                          </Grid>
                         </>
                       ) : editForm.paymentStatus === 'Credit' ? (
                         <>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
                             <TextField
                               fullWidth
                               label="Due Date"
@@ -1501,9 +1717,35 @@ const SellerSaleEntry = () => {
                               InputLabelProps={{ shrink: true }}
                             />
                           </Grid>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <TextField
+                              fullWidth
+                              label="Discount Amount"
+                              type="number"
+                              value={editForm.discountAmount || ''}
+                              onChange={(e) =>
+                                setEditForm({ ...editForm, discountAmount: e.target.value })
+                              }
+                              InputProps={{
+                                inputProps: {
+                                  onWheel: (e) => e.target.blur(),
+                                  min: 0,
+                                },
+                              }}
+                              sx={{
+                                '& input[type=number]': {
+                                  MozAppearance: 'textfield',
+                                  '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
+                                    WebkitAppearance: 'none',
+                                    margin: 0,
+                                  },
+                                },
+                              }}
+                            />
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
                             {(() => {
-                              const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0);
+                              const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0) - Number(editForm.discountAmount || 0);
                               const editChangeAmount = Math.max(0, (Number(editForm.paidAmount) || 0) - editNetAmount);
                               return (
                                 <TextField
@@ -1519,7 +1761,7 @@ const SellerSaleEntry = () => {
                         </>
                       ) : (
                         <>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
                             <TextField
                               fullWidth
                               label={
@@ -1550,9 +1792,9 @@ const SellerSaleEntry = () => {
                             />
 
                           </Grid>
-                          <Grid sx={{ width: { xs: '45%', md: '15%' } }}>
+                          <Grid item xs={12} sm={6} md={3}>
                             {(() => {
-                              const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0);
+                              const editNetAmount = editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0) - Number(editForm.discountAmount || 0);
                               const editChangeAmount = Math.max(0, (Number(editForm.paidAmount) || 0) - editNetAmount);
                               return (
                                 <TextField
@@ -1564,6 +1806,32 @@ const SellerSaleEntry = () => {
                                 />
                               );
                             })()}
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <TextField
+                              fullWidth
+                              label="Discount Amount"
+                              type="number"
+                              value={editForm.discountAmount || ''}
+                              onChange={(e) =>
+                                setEditForm({ ...editForm, discountAmount: e.target.value })
+                              }
+                              InputProps={{
+                                inputProps: {
+                                  onWheel: (e) => e.target.blur(),
+                                  min: 0,
+                                },
+                              }}
+                              sx={{
+                                '& input[type=number]': {
+                                  MozAppearance: 'textfield',
+                                  '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
+                                    WebkitAppearance: 'none',
+                                    margin: 0,
+                                  },
+                                },
+                              }}
+                            />
                           </Grid>
                         </>
                       )}
@@ -1681,7 +1949,7 @@ const SellerSaleEntry = () => {
                             </Box>
                           </Box>
                           <Grid container spacing={2}>
-                            <Grid sx={{ width: { xs: '100%', md: '25%' } }}>
+                            <Grid item xs={12} sm={6} md={3}>
                               <FormControl fullWidth>
                                 <InputLabel>Brand</InputLabel>
                                 <Select
@@ -1694,7 +1962,7 @@ const SellerSaleEntry = () => {
                                 </Select>
                               </FormControl>
                             </Grid>
-                            <Grid sx={{ width: { xs: '100%', md: '41.6667%' } }}>
+                            <Grid item xs={12} sm={6} md={3}>
                               <Autocomplete
                                 options={sortedProductsByBrandFor(item.brand, products)}
                                 getOptionLabel={(option) => option?.name ? `${option.name} (${option.SKU})` : ''}
@@ -1704,7 +1972,7 @@ const SellerSaleEntry = () => {
                                 fullWidth
                               />
                             </Grid>
-                            <Grid sx={{ width: { xs: '100%', md: '16.6667%' } }}>
+                            <Grid item xs={12} sm={6} md={3}>
                               <TextField
                                 fullWidth
                                 label="Quantity"
@@ -1725,16 +1993,16 @@ const SellerSaleEntry = () => {
                                 }}
                                 sx={{
                                   '& input[type=number]': {
-                                    MozAppearance: 'textfield',
+                                    '-moz-appearance': 'textfield',
                                     '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                      WebkitAppearance: 'none',
+                                      '-webkit-appearance': 'none',
                                       margin: 0,
                                     },
                                   },
                                 }}
                               />
                             </Grid>
-                            <Grid sx={{ width: { xs: '100%', md: '16.6667%' } }}>
+                            <Grid item xs={12} sm={6} md={3}>
                               {(() => {
                                 const suggested = prod ? (Number(prod.sellingPerPiece) || 0) : 0;
                                 const priceVal = Number(item.perPiecePrice) || 0;
@@ -1748,6 +2016,7 @@ const SellerSaleEntry = () => {
                                     onChange={(e) =>
                                       handleEditItemChange(idx, 'perPiecePrice', e.target.value)
                                     }
+                                    required
                                     error={isBelow}
                                     helperText={
                                       isBelow ? `Below suggested selling price Rs. ${suggested}` : ''
@@ -1782,7 +2051,7 @@ const SellerSaleEntry = () => {
                                 );
                               })()}
                             </Grid>
-                            <Grid sx={{ width: { xs: '100%', md: '16.6667%' } }}>
+                            <Grid item xs={12} sm={6} md={3}>
                               <TextField
                                 fullWidth
                                 label="Discount"
@@ -1799,9 +2068,9 @@ const SellerSaleEntry = () => {
                                 }}
                                 sx={{
                                   '& input[type=number]': {
-                                    MozAppearance: 'textfield',
+                                    '-moz-appearance': 'textfield',
                                     '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
-                                      WebkitAppearance: 'none',
+                                      '-webkit-appearance': 'none',
                                       margin: 0,
                                     },
                                   },
@@ -1823,7 +2092,7 @@ const SellerSaleEntry = () => {
                               </Typography>
                             </Grid>
                             {prod && (
-                              <Grid sx={{ width: { xs: '100%' } }}>
+                              <Grid item xs={12} sm={6} md={6}>
                                 <Typography variant="body2" color="text.secondary">
                                   📦 Total Pieces: {totalPcs} (Cart: {ppc > 0 ? Math.floor(totalPcs / ppc) : 0}, Lose: {ppc > 0 ? (totalPcs % ppc) : totalPcs}){qty > 0 && ` → After Edit: Remaining ${remaining} (Cart: ${ppc > 0 ? Math.floor(remaining / ppc) : 0}, Lose: ${ppc > 0 ? (remaining % ppc) : remaining})`}
                                 </Typography>
@@ -1850,20 +2119,71 @@ const SellerSaleEntry = () => {
                 </Grid>
 
                 {/* Summary Section */}
-                <Grid sx={{ width: { xs: '100%' } }}>
-                  <Paper elevation={3} sx={{ p: 2, bgcolor: '#f8f9fa' }}>
-                    <Grid container spacing={2}>
-                      <Grid sx={{ width: { xs: '100%', sm: '50%' } }}>
-                        <Typography variant="body2" color="text.secondary">Total Quantity</Typography>
-                        <Typography variant="h6">{editForm.items.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0)}</Typography>
-                      </Grid>
-                      <Grid sx={{ width: { xs: '100%', sm: '50%' }, textAlign: 'right' }}>
-                        <Typography variant="body2" color="text.secondary">Total Amount</Typography>
-                        <Typography variant="h6" color="primary.main">
-                          Rs. {editForm.items.reduce((sum, i) => sum + ((Number(i.perPiecePrice) * Number(i.quantity)) - (Number(i.discount) || 0)), 0)}
-                        </Typography>
-                      </Grid>
-                    </Grid>
+                <Grid item xs={12} my={3}>
+                  <Paper elevation={3} sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <Typography variant="h6" sx={{ mb: 3, color: 'primary.main', fontWeight: 600 }}>
+                      Sale Summary
+                    </Typography>
+                    {(() => {
+                      const totalQuantity = editForm.items.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+                      const totalBeforeDiscount = editForm.items.reduce((sum, i) => sum + (Number(i.perPiecePrice) * Number(i.quantity)), 0);
+                      const itemDiscounts = editForm.items.reduce((sum, i) => sum + (Number(i.discount) || 0), 0);
+                      const globalDiscount = Number(editForm.discountAmount || 0);
+                      const totalDiscount = itemDiscounts + globalDiscount;
+                      const netAmount = totalBeforeDiscount - totalDiscount;
+
+                      return (
+                        <Grid container spacing={3}>
+                          {/* Total Quantity */}
+                          <Grid item xs={12} md={3} px={1}>
+                            <Box sx={{ p: 2, ml: 2, bgcolor: darkMode ? '#1a3a52' : '#e3f2fd', borderRadius: 2, textAlign: 'center' }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Total Quantity
+                              </Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                                {totalQuantity}
+                              </Typography>
+                            </Box>
+                          </Grid>
+
+                          {/* Total Amount */}
+                          <Grid item xs={12} md={3} px={1}>
+                            <Box sx={{ p: 2, bgcolor: darkMode ? '#1a3a52' : '#e3f2fd', borderRadius: 2, textAlign: 'center' }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Total Amount
+                              </Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                                Rs. {totalBeforeDiscount.toLocaleString()}
+                              </Typography>
+                            </Box>
+                          </Grid>
+
+                          {/* Total Discount */}
+                          <Grid item xs={12} md={3} px={1}>
+                            <Box sx={{ p: 2, bgcolor: darkMode ? '#4a3728' : '#fff3e0', borderRadius: 2, textAlign: 'center' }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Total Discount
+                              </Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 700, color: 'warning.main' }}>
+                                Rs. {totalDiscount.toLocaleString()}
+                              </Typography>
+                            </Box>
+                          </Grid>
+
+                          {/* Net Amount */}
+                          <Grid item xs={12} md={3} px={1}>
+                            <Box sx={{ p: 2, bgcolor: darkMode ? '#1b5e20' : '#e8f5e9', borderRadius: 2, textAlign: 'center' }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Net Amount
+                              </Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 700, color: 'success.main' }}>
+                                Rs. {netAmount.toLocaleString()}
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      );
+                    })()}
                   </Paper>
                 </Grid>
               </Grid>
@@ -1956,84 +2276,101 @@ const SellerSaleEntry = () => {
             </DialogActions>
           </Dialog>
 
-          <Dialog open={refundModalOpen} onClose={() => setRefundModalOpen(false)} maxWidth="sm" fullWidth>
-            <DialogTitle>Refund Items</DialogTitle>
-            <DialogContent>
-              <Typography variant="body2" sx={{ mb: 1 }}>
-                Select quantity for each line item below. You may refund partially or fully.
+          <Dialog open={refundModalOpen} onClose={() => setRefundModalOpen(false)} maxWidth="md" fullWidth>
+            <DialogTitle sx={{ bgcolor: 'error.main', color: 'white' }}>Process Refund</DialogTitle>
+            <DialogContent sx={{ p: 3 }}>
+              <Typography variant="body1" sx={{ mb: 2, fontWeight: 600 }}>
+                Select quantities to refund for each item. You may refund partially or fully.
               </Typography>
               <Button
                 size="small"
                 variant="outlined"
+                color="error"
                 onClick={() => {
                   const copy = refundItems.map(i => ({ ...i, qty: i.maxQty, full: true }));
                   setRefundItems(copy);
                 }}
-                sx={{ mb: 2 }}
+                sx={{ mb: 3 }}
               >
-                All Items Refund
+                Refund All Items
               </Button>
 
               {refundItems.map((ri, idx) => (
-                <Grid container spacing={1} alignItems="center" key={idx} sx={{ mb: 1 }}>
-                  <Grid item xs={4}>
-                    <Typography variant="body2">{ri.productName}</Typography>
+                <Paper key={idx} elevation={2} sx={{ p: 2, mb: 2, borderRadius: 2, border: `1px solid ${darkMode ? '#444' : '#e0e0e0'}` }}>
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{ri.productName}</Typography>
+                      <Typography variant="body2" color="text.secondary">Max: {ri.maxQty} | Price: Rs. {ri.perPiecePrice.toLocaleString()}</Typography>
+                    </Grid>
+                    <Grid item xs={6} sm={2}>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        label="Refund Qty"
+                        value={ri.qty}
+                        onChange={e => {
+                          let v = Number(e.target.value);
+                          if (isNaN(v)) v = 0;
+                          if (v > ri.maxQty) v = ri.maxQty;
+                          if (v < 0) v = 0;
+                          const copy = [...refundItems];
+                          copy[idx] = { ...ri, qty: v, full: v === ri.maxQty };
+                          setRefundItems(copy);
+                        }}
+                        InputProps={{
+                          inputProps: { min: 0, max: ri.maxQty, onWheel: e => e.target.blur() },
+                        }}
+                        sx={{
+                          '& input[type=number]::-webkit-inner-spin-button, & input[type=number]::-webkit-outer-spin-button': {
+                            '-webkit-appearance': 'none',
+                            margin: 0
+                          },
+                          '& input[type=number]': {
+                            '-moz-appearance': 'textfield'
+                          }
+                        }}
+                        size="small"
+                      />
+                    </Grid>
+                    <Grid item xs={6} sm={2}>
+                      <Typography variant="body1" sx={{ fontWeight: 600, textAlign: 'center' }}>
+                        Rs. {(ri.perPiecePrice * ri.qty).toLocaleString()}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={ri.full}
+                            onChange={e => {
+                              const copy = [...refundItems];
+                              copy[idx] = { ...ri, full: e.target.checked, qty: e.target.checked ? ri.maxQty : 0 };
+                              setRefundItems(copy);
+                            }}
+                          />
+                        }
+                        label="Refund All Quantity"
+                      />
+                    </Grid>
                   </Grid>
-                  <Grid item xs={2}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>Rs. {ri.perPiecePrice.toLocaleString()}</Typography>
-                  </Grid>
-                  <Grid item xs={2}>
-                    <TextField
-                      type="number"
-                      size="small"
-                      label="Qty"
-                      value={ri.qty}
-                      onChange={e => {
-                        let v = Number(e.target.value);
-                        if (isNaN(v)) v = 0;
-                        if (v > ri.maxQty) v = ri.maxQty;
-                        if (v < 0) v = 0;
-                        const copy = [...refundItems];
-                        copy[idx] = { ...ri, qty: v, full: v === ri.maxQty };
-                        setRefundItems(copy);
-                      }}
-                      InputProps={{ inputProps: { min: 0, max: ri.maxQty, onWheel: e => e.target.blur() } }}
-                      sx={{ width: '60px' }}
-                    />
-                  </Grid>
-                  <Grid item xs={1} sx={{ textAlign: 'right' }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>Rs. {(ri.perPiecePrice * ri.qty).toLocaleString()}</Typography>
-                  </Grid>
-                  <Grid item xs={2}>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={ri.full}
-                          onChange={e => {
-                            const copy = [...refundItems];
-                            copy[idx] = { ...ri, full: e.target.checked, qty: e.target.checked ? ri.maxQty : 0 };
-                            setRefundItems(copy);
-                          }}
-                        />
-                      }
-                      label="All Qty"
-                    />
-                  </Grid>
-                  <Grid item xs={1}>
-                    <Typography variant="caption" color="text.secondary">
-                      (Max {ri.maxQty})
-                    </Typography>
-                  </Grid>
-                </Grid>
+                </Paper>
               ))}
 
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
-                Reason (optional):
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 3, mb: 1, fontWeight: 600 }}>
+                Refund Reason (optional):
               </Typography>
-              <TextField fullWidth label="Reason (optional)" value={refundReason} onChange={e => setRefundReason(e.target.value)} multiline rows={2} />
+              <TextField
+                fullWidth
+                label="Reason (optional)"
+                value={refundReason || ''}
+                onChange={e => setRefundReason(e.target.value)}
+                multiline
+                rows={3}
+                variant="outlined"
+              />
             </DialogContent>
-            <DialogActions>
+            <DialogActions sx={{ p: 2, bgcolor: darkMode ? '#1e1e1e' : '#f5f5f5' }}>
               <Button onClick={() => { setRefundModalOpen(false); setRefundItems([]); }}>Cancel</Button>
               <Button
                 variant="contained"
@@ -2092,59 +2429,74 @@ const SellerSaleEntry = () => {
           </Dialog>
 
           <Dialog open={warrantyModalOpen} onClose={() => setWarrantyModalOpen(false)} maxWidth="md" fullWidth>
-            <DialogTitle>Claim Warranty Items</DialogTitle>
-            <DialogContent>
-              <Typography variant="body2" sx={{ mb: 1 }}>
+            <DialogTitle sx={{ bgcolor: 'warning.main', color: 'white' }}>Claim Warranty</DialogTitle>
+            <DialogContent sx={{ p: 3 }}>
+              <Typography variant="body1" sx={{ mb: 2, fontWeight: 600 }}>
                 Select quantities to claim under warranty for eligible items. Stock will be reduced accordingly.
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 600 }}>
                 Reason (optional):
               </Typography>
               <TextField
                 fullWidth
                 label="Reason (optional)"
-                value={warrantyReason}
+                value={warrantyReason || ''}
                 onChange={e => setWarrantyReason(e.target.value)}
                 multiline
-                rows={2}
-                sx={{ mb: 2 }}
+                rows={3}
+                variant="outlined"
+                sx={{ mb: 3 }}
               />
               {warrantyItems.map((it, idx) => (
-                <Box
+                <Paper
                   key={`${it.productId || it.SKU || idx}`}
-                  sx={{ mb: 2, p: 1.5, borderRadius: 1, border: `1px solid ${darkMode ? '#333' : '#ddd'}` }}
+                  elevation={2}
+                  sx={{ mb: 2, p: 2, borderRadius: 2, border: `1px solid ${darkMode ? '#444' : '#e0e0e0'}` }}
                 >
-                  <Typography variant="subtitle2">
-                    {it.productName || it.SKU || 'Product'} (Max claimable: {it.maxQty})
-                  </Typography>
-                  {it.warrantyUntil && (
-                    <Typography variant="caption" color="text.secondary">
-                      Warranty valid until {new Date(it.warrantyUntil).toLocaleDateString()}
-                    </Typography>
-                  )}
-                  <TextField
-                    sx={{ mt: 1, maxWidth: 160 }}
-                    label="Claim Qty"
-                    type="number"
-                    value={it.qty || ''}
-                    onChange={e => {
-                      const val = Math.max(0, Math.min(Number(e.target.value) || 0, it.maxQty));
-                      setWarrantyItems(prev =>
-                        prev.map((row, i) => (i === idx ? { ...row, qty: val } : row))
-                      );
-                    }}
-                    InputProps={{
-                      inputProps: {
-                        onWheel: (e) => e.target.blur(),
-                        min: 0,
-                        max: it.maxQty
-                      }
-                    }}
-                  />
-                </Box>
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{it.productName || it.SKU || 'Product'}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Max Claimable: {it.maxQty}
+                        {it.warrantyUntil && ` | Valid until: ${new Date(it.warrantyUntil).toLocaleDateString()}`}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Claim Quantity"
+                        type="number"
+                        value={it.qty || ''}
+                        onChange={e => {
+                          const val = Math.max(0, Math.min(Number(e.target.value) || 0, it.maxQty));
+                          setWarrantyItems(prev =>
+                            prev.map((row, i) => (i === idx ? { ...row, qty: val } : row))
+                          );
+                        }}
+                        InputProps={{
+                          inputProps: {
+                            onWheel: (e) => e.target.blur(),
+                            min: 0,
+                            max: it.maxQty
+                          }
+                        }}
+                        sx={{
+                          '& input[type=number]::-webkit-inner-spin-button, & input[type=number]::-webkit-outer-spin-button': {
+                            '-webkit-appearance': 'none',
+                            margin: 0
+                          },
+                          '& input[type=number]': {
+                            '-moz-appearance': 'textfield'
+                          }
+                        }}
+                        size="small"
+                      />
+                    </Grid>
+                  </Grid>
+                </Paper>
               ))}
             </DialogContent>
-            <DialogActions>
+            <DialogActions sx={{ p: 2, bgcolor: darkMode ? '#1e1e1e' : '#f5f5f5' }}>
               <Button onClick={() => setWarrantyModalOpen(false)}>Cancel</Button>
               <Button
                 variant="contained"

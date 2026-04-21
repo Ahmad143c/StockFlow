@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Drawer, List, ListItem, ListItemIcon, ListItemText, Toolbar, Collapse, ListItemButton, Box, IconButton, Tooltip, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useLocation } from 'react-router-dom';
@@ -30,23 +30,26 @@ const AdminSidebar = ({ user, handleLogout }) => {
   // treat small and tablets as mobile for drawer behaviour
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // helpers
-  const isActive = (path) => location.pathname === path;
-  const startsWith = (prefix) => location.pathname.startsWith(prefix);
+  // helpers - memoized
+  const isActive = useCallback((path) => location.pathname === path, [location.pathname]);
+  const startsWith = useCallback((prefix) => location.pathname.startsWith(prefix), [location.pathname]);
 
-  const activeSx = {
+  const activeSx = useMemo(() => ({
     '&.Mui-selected': {
       backgroundColor: '#1976d2',
       color: '#fff',
       '& .MuiListItemIcon-root': { color: '#fff' },
     },
-  };
+    '&.Mui-selected:hover': {
+      backgroundColor: '#1976d2',
+    },
+  }), []);
 
-  const hoverSx = {
+  const hoverSx = useMemo(() => ({
     '&:hover': {
       backgroundColor: '#1565c0',
     },
-  };
+  }), []);
 
   const [openProduct, setOpenProduct] = useState(startsWith('/admin/add-product') || startsWith('/admin/products'));
   const [openSeller, setOpenSeller] = useState(
@@ -72,20 +75,20 @@ const AdminSidebar = ({ user, handleLogout }) => {
     setOpenInventory(startsWith('/admin/add-purchase') || startsWith('/admin/purchases-report'));
   }, [location]);
 
-  // Custom style for icon and text spacing
-  const iconTextStyle = {
+  // Custom style for icon and text spacing - memoized
+  const iconTextStyle = useMemo(() => ({
     minWidth: 32,
-  };
+  }), []);
 
-  const handleMouseEnter = () => {
+  const handleMouseEnter = useCallback(() => {
     if (!isMobile) setSidebarOpen(true);
-  };
+  }, [isMobile]);
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = useCallback(() => {
     if (!isMobile) setSidebarOpen(false);
-  };
+  }, [isMobile]);
 
-  const handleDrawerToggle = () => {
+  const handleDrawerToggle = useCallback(() => {
     if (isMobile) {
       setMobileVisible(v => {
         const next = !v;
@@ -94,11 +97,11 @@ const AdminSidebar = ({ user, handleLogout }) => {
         return next;
       });
     }
-  };
+  }, [isMobile]);
 
-  const linkProps = isMobile ? { onClick: handleDrawerToggle } : {};
+  const linkProps = useMemo(() => isMobile ? { onClick: handleDrawerToggle } : {}, [isMobile, handleDrawerToggle]);
 
-  const showLabels = sidebarOpen || (isMobile && mobileVisible && mobileExpanded);
+  const showLabels = useMemo(() => sidebarOpen || (isMobile && mobileVisible && mobileExpanded), [sidebarOpen, isMobile, mobileVisible, mobileExpanded]);
 
   React.useEffect(() => {
     const handler = () => {
@@ -108,10 +111,27 @@ const AdminSidebar = ({ user, handleLogout }) => {
     return () => window.removeEventListener('toggleSidebar', handler);
   }, [isMobile]);
 
-  const handleLogoutClick = () => {
+  const handleLogoutClick = useCallback(() => {
     if (isMobile) handleDrawerToggle();
     try { if (typeof handleLogout === 'function') handleLogout(); } catch (e) {}
-  };
+  }, [isMobile, handleDrawerToggle]);
+
+  const handleToggleClick = useCallback(() => {
+    if (isMobile) {
+      if (!mobileVisible) {
+        handleDrawerToggle();
+      } else {
+        setMobileExpanded(e => !e);
+      }
+    } else {
+      setSidebarOpen(s => !s);
+    }
+  }, [isMobile, mobileVisible, handleDrawerToggle]);
+
+  const handleProductToggle = useCallback(() => setOpenProduct(p => !p), []);
+  const handleSellerToggle = useCallback(() => setOpenSeller(p => !p), []);
+  const handleVendorsToggle = useCallback(() => setOpenVendors(p => !p), []);
+  const handleInventoryToggle = useCallback(() => setOpenInventory(p => !p), []);
 
   return (
     <Box
@@ -143,27 +163,32 @@ const AdminSidebar = ({ user, handleLogout }) => {
       <List>
         {/* Toggle Button */}
         <ListItem disablePadding>
-          <ListItemButton sx={{ pl: 1.5, justifyContent: 'center' }} onClick={() => {
-              if (isMobile) {
-                if (!mobileVisible) {
-                  handleDrawerToggle();
-                } else {
-                  setMobileExpanded(e => !e);
-                }
-              } else {
-                setSidebarOpen(s => !s);
-              }
-            }}>
+          <ListItemButton sx={{ pl: 1.5, justifyContent: 'center' }} onClick={handleToggleClick}>
             <ListItemIcon sx={{ ...iconTextStyle, justifyContent: 'center' }}>
               {sidebarOpen ? <CloseIcon /> : <MenuIcon />}
             </ListItemIcon>
           </ListItemButton>
         </ListItem>
 
+        {/* Dashboard */}
+        <Tooltip title={!sidebarOpen ? "Dashboard" : ""} placement="right">
+          <ListItem disablePadding>
+            <ListItemButton
+              component={Link} {...linkProps}
+              to="/admin"
+              selected={isActive('/admin')}
+              sx={{ ...activeSx, ...hoverSx }}
+            >
+              <ListItemIcon sx={iconTextStyle}><DashboardIcon /></ListItemIcon>
+              <ListItemText primary="Dashboard" sx={{ display: showLabels ? 'block' : 'none' }} />
+            </ListItemButton>
+          </ListItem>
+        </Tooltip>
+
         {/* Product Section */}
   <Tooltip title={!sidebarOpen ? "Product" : ""} placement="right">
     <ListItem disablePadding>
-          <ListItemButton onClick={() => setOpenProduct(!openProduct)}>
+          <ListItemButton onClick={handleProductToggle}>
             <ListItemIcon sx={iconTextStyle}><InventoryIcon /></ListItemIcon>
             <ListItemText primary="Product" sx={{ display: showLabels ? 'block' : 'none' }} />
             {sidebarOpen && (openProduct ? <ExpandLess /> : <ExpandMore />)}
@@ -209,7 +234,7 @@ const AdminSidebar = ({ user, handleLogout }) => {
         {/* Seller Section */}
   <Tooltip title={!sidebarOpen ? "Seller" : ""} placement="right">
     <ListItem disablePadding>
-          <ListItemButton onClick={() => setOpenSeller(!openSeller)}>
+          <ListItemButton onClick={handleSellerToggle}>
             <ListItemIcon sx={iconTextStyle}><PeopleIcon /></ListItemIcon>
             <ListItemText primary="Seller" sx={{ display: showLabels ? 'block' : 'none' }} />
             {sidebarOpen && (openSeller ? <ExpandLess /> : <ExpandMore />)}
@@ -268,7 +293,7 @@ const AdminSidebar = ({ user, handleLogout }) => {
         {/* Vendors Section */}
         <Tooltip title={!sidebarOpen ? "Vendors" : ""} placement="right">
           <ListItem disablePadding>
-            <ListItemButton onClick={() => setOpenVendors(!openVendors)}>
+            <ListItemButton onClick={handleVendorsToggle}>
               <ListItemIcon sx={iconTextStyle}><PeopleIcon /></ListItemIcon>
               <ListItemText primary="Vendors" sx={{ display: showLabels ? 'block' : 'none' }} />
               {sidebarOpen && (openVendors ? <ExpandLess /> : <ExpandMore />)}
@@ -313,7 +338,7 @@ const AdminSidebar = ({ user, handleLogout }) => {
         {/* Inventory Purchases Section */}
         <Tooltip title={!sidebarOpen ? "Inventory Purchases" : ""} placement="right">
           <ListItem disablePadding>
-            <ListItemButton onClick={() => setOpenInventory(!openInventory)}>
+            <ListItemButton onClick={handleInventoryToggle}>
               <ListItemIcon sx={iconTextStyle}><ShoppingCartIcon /></ListItemIcon>
               <ListItemText primary="Inventory Purchases" sx={{ display: showLabels ? 'block' : 'none' }} />
               {sidebarOpen && (openInventory ? <ExpandLess /> : <ExpandMore />)}
@@ -398,4 +423,4 @@ const AdminSidebar = ({ user, handleLogout }) => {
   );
 };
 
-export default AdminSidebar;
+export default React.memo(AdminSidebar);

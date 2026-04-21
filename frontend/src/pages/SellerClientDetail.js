@@ -26,6 +26,10 @@ import {
   List,
   ListItem,
   ListItemText,
+  Avatar,
+  useTheme,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useParams } from 'react-router-dom';
 import { useDarkMode } from '../context/DarkModeContext';
@@ -36,11 +40,17 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
+import PeopleIcon from '@mui/icons-material/People';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import Tooltip from '@mui/material/Tooltip';
 import { generateInvoiceHTML as utilGenerateInvoiceHTML } from '../utils/invoiceUtils';
 
 const SellerClientDetail = ({ sellerId: propSellerId }) => {
   const { darkMode } = useDarkMode();
+  const theme = useTheme();
   const { sellerId: routeSellerId } = useParams();
 
   // Resolve sellerId: prop may be an id string or an object (e.g., user), so handle both.
@@ -106,6 +116,7 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [invoiceQuery, setInvoiceQuery] = useState('');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [refundInvoices, setRefundInvoices] = useState([]);
@@ -209,7 +220,7 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
 
   // Fetch invoices with optional filters
   const fetchInvoices = useCallback(
-    async (custName = null, custContact = null, invQuery = null) => {
+    async (custName = null, custContact = null, invQuery = null, paymentStatus = null) => {
       if (!isValidSellerId) {
         setError('Invalid seller ID. Cannot fetch invoices.');
         return;
@@ -273,6 +284,14 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
           });
         }
 
+        // Apply payment status filter
+        if (paymentStatus) {
+          filteredInvoices = filteredInvoices.filter(i => {
+            const status = i.paymentStatus || '';
+            return status.toLowerCase() === paymentStatus.toLowerCase();
+          });
+        }
+
         // previously we hid any sale containing a refund from the main list.
         // that caused "No invoices found" when the only invoices had partial refunds.
         // keep all filtered invoices for display and maintain a separate refund list.
@@ -328,8 +347,8 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     // Parse multiple invoice queries (comma-separated)
     const invoiceIds = invoiceQuery.trim() ? invoiceQuery.split(',').map(i => i.trim()).filter(Boolean) : [];
 
-    // Fetch all invoices for this customer with date filters
-    let filtered = await fetchInvoices(name, contact, null);
+    // Fetch all invoices for this customer with date filters and payment status
+    let filtered = await fetchInvoices(name, contact, null, paymentStatusFilter || null);
 
     if (!filtered) filtered = [];
 
@@ -337,11 +356,8 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     if (invoiceIds.length > 0) {
       filtered = filtered.filter(inv => {
         const invNum = (inv.invoiceNumber || '').toString().toLowerCase();
-        const id = (inv._id || inv.id || '').toString().toLowerCase();
-        return invoiceIds.some(q => {
-          const ql = q.toLowerCase();
-          return invNum.includes(ql) || id.includes(ql);
-        });
+        const invId = (inv._id || '').toString().toLowerCase();
+        return invoiceIds.some(id => invNum.includes(id.toLowerCase()) || invId.includes(id.toLowerCase()));
       });
     }
 
@@ -355,7 +371,7 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     });
     setInvoices(filteredRegular);
     setRefundInvoices(filtered.filter(i => i.refunds && i.refunds.length > 0));
-  }, [selectedCustomer, invoiceQuery, fetchInvoices]);
+  }, [selectedCustomer, invoiceQuery, paymentStatusFilter, fetchInvoices]);
 
   // Apply only date filters (when no invoice search is provided)
   const handleApplyDateFilter = useCallback(async () => {
@@ -366,9 +382,9 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
 
     const name = selectedCustomer.name || null;
     const contact = selectedCustomer.contact || null;
-    // pass invoiceQuery too so user can search and apply dates together
-    await fetchInvoices(name, contact, invoiceQuery || null);
-  }, [selectedCustomer, fetchInvoices, invoiceQuery]);
+    // pass invoiceQuery and paymentStatusFilter so user can search and apply filters together
+    await fetchInvoices(name, contact, invoiceQuery || null, paymentStatusFilter || null);
+  }, [selectedCustomer, fetchInvoices, invoiceQuery, paymentStatusFilter]);
 
   // Handle advanced search with filters
   const handleAdvancedSearch = useCallback(async () => {
@@ -413,6 +429,7 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     setStartDate('');
     setEndDate('');
     setInvoiceQuery('');
+    setPaymentStatusFilter('');
     setSelectedCustomer(null);
     setInvoices([]);
     setRefundInvoices([]);
@@ -749,7 +766,7 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     const invoiceNum = refundInv.invoiceNumber || (refundInv._id ? refundInv._id.toString().slice(-6) : '-');
     const totalRefundAmount = (refundInv.refunds || []).reduce((sum, r) => sum + (Number(r.totalRefundAmount) || 0), 0);
     const totalRefundQty = (refundInv.refunds || []).reduce((sum, r) => sum + (Number(r.totalRefundQty) || 0), 0);
-    
+
     const refundRows = (refundInv.refunds || []).map((ref, idx) => {
       const refundDate = ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-';
       const items = (ref.items || []).map(i => `${i.productName || i.SKU} (${i.quantity})`).join(', ');
@@ -966,6 +983,15 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
 
   const generateAllCustomersDetailPrintHTML = () => {
     // Combine customer invoices with refund invoices, dedupe by id
+    const cellSx = {
+      maxWidth: { xs: 80, sm: 120, md: 160, lg: 240 },
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+      padding: { xs: '6px 8px', sm: '12px 16px' }
+    };
+
     const fromCustomers = customers.flatMap(c => c.invoices || []);
     const combined = [...fromCustomers, ...(refundInvoices || [])];
     const seen = new Set();
@@ -1008,23 +1034,179 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
     setTimeout(() => w.print(), 250);
   };
 
+  // Define cellSx like SellerSalesReport.js for consistent styling
+  const cellSx = {
+    maxWidth: { xs: 80, sm: 120, md: 160, lg: 240 },
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+    padding: { xs: '6px 8px', sm: '12px 16px' }
+  };
+
   return (
     <Box
       sx={{
-        mt: 2,
-        width: '100%',
-        backgroundColor: darkMode ? '#121212' : '#fafafa',
+        maxWidth: { xs: '100%', lg: 1800 },
+        minWidth: 0,
+        boxSizing: 'border-box',
+        overflowX: 'hidden',
+        px: { xs: 1, sm: 1, md: 2 },
+        mt: { xs: 1, sm: 2, md: 3 },
+        py: { xs: 2, sm: 3 },
+        pb: 1,
+        backgroundColor: darkMode ? '#121212' : '#f5f5f5',
         minHeight: '100vh',
-        
+        mx: 'auto',
+        position: 'relative',
       }}
     >
-      <Typography
-        variant="h4"
-        align="center"
-        sx={{ mb: 3, fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
-      >
-        Client Invoices & Analytics
-      </Typography>
+      {/* Header Section */}
+      <Box sx={{ mb: { xs: 3, sm: 4 } }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2, flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 1.5, sm: 2 } }}>
+          <Avatar sx={{ bgcolor: '#1976d2', mr: { xs: 0, sm: 2 }, width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}>
+            <ReceiptIcon sx={{ fontSize: { xs: 24, sm: 28 } }} />
+          </Avatar>
+          <Typography
+            variant="h4"
+            sx={{
+              fontWeight: 700,
+              color: darkMode ? '#fff' : '#1a1a1a',
+              fontSize: { xs: '1.5rem', sm: '2.125rem' },
+              textAlign: { xs: 'center', sm: 'left' },
+            }}
+          >
+            Client Invoices & Analytics
+          </Typography>
+        </Box>
+        <Typography
+          variant="body2"
+          align="center"
+          sx={{
+            color: darkMode ? '#aaa' : '#666',
+            fontSize: { xs: '0.8rem', sm: '0.875rem' },
+            px: { xs: 2, sm: 0 },
+          }}
+        >
+          View and manage customer invoices, track payments, and analyze sales data
+        </Typography>
+      </Box>
+
+      {/* Summary Cards */}
+      <Grid container spacing={{ xs: 1.5, sm: 2 }} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card
+            elevation={2}
+            sx={{
+              background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#fff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+              borderRadius: 3,
+              borderLeft: `4px solid #1976d2`,
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 1.5, sm: 2 } }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', mb: 0.5, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Total Customers
+                  </Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '1.25rem', sm: '1.5rem' } }}>
+                    {customers.length}
+                  </Typography>
+                </Box>
+                <Avatar sx={{ bgcolor: '#1976d2', width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}>
+                  <PeopleIcon sx={{ fontSize: { xs: 24, sm: 28 } }} />
+                </Avatar>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card
+            elevation={2}
+            sx={{
+              background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#fff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+              borderRadius: 3,
+              borderLeft: `4px solid #2e7d32`,
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 1.5, sm: 2 } }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', mb: 0.5, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Total Invoices
+                  </Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '1.25rem', sm: '1.5rem' } }}>
+                    {invoices.length}
+                  </Typography>
+                </Box>
+                <Avatar sx={{ bgcolor: '#2e7d32', width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}>
+                  <ReceiptIcon sx={{ fontSize: { xs: 24, sm: 28 } }} />
+                </Avatar>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card
+            elevation={2}
+            sx={{
+              background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#fff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+              borderRadius: 3,
+              borderLeft: `4px solid #ed6c02`,
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 1.5, sm: 2 } }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', mb: 0.5, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Total Revenue
+                  </Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '1.25rem', sm: '1.5rem' } }}>
+                    Rs. {(totalRevenue / 1000).toFixed(1)}k
+                  </Typography>
+                </Box>
+                <Avatar sx={{ bgcolor: '#ed6c02', width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}>
+                  <AttachMoneyIcon sx={{ fontSize: { xs: 24, sm: 28 } }} />
+                </Avatar>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card
+            elevation={2}
+            sx={{
+              background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#fff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+              borderRadius: 3,
+              borderLeft: `4px solid #9c27b0`,
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+            }}
+          >
+            <CardContent sx={{ p: { xs: 1.5, sm: 2 } }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', mb: 0.5, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Paid Amount
+                  </Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '1.25rem', sm: '1.5rem' } }}>
+                    Rs. {(paymentProgress.totalPaid / 1000).toFixed(1)}k
+                  </Typography>
+                </Box>
+                <Avatar sx={{ bgcolor: '#9c27b0', width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 } }}>
+                  <AccountBalanceWalletIcon sx={{ fontSize: { xs: 24, sm: 28 } }} />
+                </Avatar>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
 
       {/* Invalid Seller ID Error */}
       {!isValidSellerId && (
@@ -1063,17 +1245,39 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
         <Paper
           elevation={3}
           sx={{
-            p: 3,
+            p: { xs: 1, sm: 2, md: 4 },
             mb: 3,
             backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-            borderRadius: 2,
+            borderRadius: { xs: 3, sm: 2, md: 6 },
             border: darkMode ? '1px solid #333' : 'none',
+            boxShadow: darkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.08)',
+            maxWidth: { xs: 'calc(90vw - 16px)', sm: '100%', md: 'calc(106vw - 300px)' },
+            width: '100%',
+            overflowX: 'hidden',
+            mx: 'auto',
+            minWidth: 0,
+            position: 'relative',
           }}
         >
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#333' }}>
-              Search & Filter
-            </Typography>
+          <Box sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            mb: { xs: 2, sm: 3 },
+            pb: { xs: 1.5, sm: 2 },
+            borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: { xs: 1.5, sm: 0 },
+            alignItems: { xs: 'flex-start', sm: 'center' },
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Avatar sx={{ bgcolor: '#1976d2', width: { xs: 32, sm: 36 }, height: { xs: 32, sm: 36 } }}>
+                <SearchIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
+              </Avatar>
+              <Typography variant="h6" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
+                Search & Filter
+              </Typography>
+            </Box>
             <Button
               size="small"
               variant="contained"
@@ -1081,12 +1285,19 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
               startIcon={<PrintIcon />}
               onClick={() => handlePrintCustomerDetail()}
               disabled={customers.length === 0}
-              sx={{ textTransform: 'none', borderRadius: 1 }}
+              sx={{
+                textTransform: 'none',
+                borderRadius: 2,
+                px: { xs: 1.5, sm: 2 },
+                py: 1,
+                fontWeight: 500,
+                width: { xs: '100%', sm: 'auto' },
+              }}
             >
               Print All Customers
             </Button>
           </Box>
-          <Grid container spacing={2} alignItems="flex-end">
+          <Grid container spacing={{ xs: 1.5, sm: 2.5 }} alignItems="flex-end">
             <Grid item xs={12} sm={6} md={3}>
               <TextField
                 fullWidth
@@ -1100,8 +1311,12 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                    borderRadius: 2,
                     '&:hover fieldset': { borderColor: '#1976d2' },
+                    '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
                   },
+                  '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                  '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
                 }}
               />
             </Grid>
@@ -1119,15 +1334,17 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                    borderRadius: 2,
                     '&:hover fieldset': { borderColor: '#1976d2' },
+                    '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
                   },
+                  '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                  '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
                 }}
               />
             </Grid>
 
-            {/* Date filters removed from Customer Search section - moved to Invoices panel */}
-
-            <Grid item xs={12} sm={6} md={2}>
+            <Grid item xs={6} sm={4} md={2}>
               <Button
                 fullWidth
                 variant="contained"
@@ -1135,24 +1352,41 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                 startIcon={<SearchIcon />}
                 onClick={handleAdvancedSearch}
                 disabled={loadingInvoices}
-                sx={{ height: '40px' }}
+                sx={{
+                  height: '40px',
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  boxShadow: '0 2px 8px rgba(25, 118, 210, 0.3)',
+                  '&:hover': { boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)' },
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                }}
               >
                 Search
               </Button>
             </Grid>
 
-            <Grid item xs={12} sm={6} md={2}>
+            <Grid item xs={6} sm={4} md={2}>
               <Button
                 fullWidth
                 variant="outlined"
                 onClick={handleClearFilters}
-                sx={{ height: '40px' }}
+                sx={{
+                  height: '40px',
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  borderColor: darkMode ? '#555' : '#ddd',
+                  color: darkMode ? '#fff' : '#666',
+                  '&:hover': { borderColor: '#1976d2', color: '#1976d2' },
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                }}
               >
                 Clear
               </Button>
             </Grid>
 
-            <Grid item xs={12} sm={6} md={1}>
+            <Grid item xs={12} sm={4} md={2}>
               <Button
                 fullWidth
                 variant="outlined"
@@ -1160,7 +1394,16 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                 startIcon={<RefreshIcon />}
                 onClick={fetchCustomers}
                 disabled={loadingCustomers}
-                sx={{ height: '40px' }}
+                sx={{
+                  height: '40px',
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  borderColor: darkMode ? '#555' : '#ddd',
+                  color: darkMode ? '#fff' : '#666',
+                  '&:hover': { borderColor: '#2e7d32', color: '#2e7d32' },
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                }}
               >
                 Refresh
               </Button>
@@ -1169,9 +1412,40 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
 
           {/* Active Filters Display */}
           {(query || contactQuery) && (
-            <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              {query && <Chip label={`Customer: ${query}`} onDelete={() => setQuery('')} size="small" />}
-              {contactQuery && <Chip label={`Contact: ${contactQuery}`} onDelete={() => setContactQuery('')} size="small" />}
+            <Box sx={{ mt: { xs: 2, sm: 2.5 }, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', fontWeight: 500, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                Active Filters:
+              </Typography>
+              {query && (
+                <Chip
+                  label={`Customer: ${query}`}
+                  onDelete={() => setQuery('')}
+                  size="small"
+                  sx={{
+                    bgcolor: darkMode ? '#2a2a2a' : '#e3f2fd',
+                    color: darkMode ? '#fff' : '#1976d2',
+                    borderRadius: 2,
+                    fontWeight: 500,
+                    fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                    height: { xs: 24, sm: 'auto' },
+                  }}
+                />
+              )}
+              {contactQuery && (
+                <Chip
+                  label={`Contact: ${contactQuery}`}
+                  onDelete={() => setContactQuery('')}
+                  size="small"
+                  sx={{
+                    bgcolor: darkMode ? '#2a2a2a' : '#e3f2fd',
+                    color: darkMode ? '#fff' : '#1976d2',
+                    borderRadius: 2,
+                    fontWeight: 500,
+                    fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                    height: { xs: 24, sm: 'auto' },
+                  }}
+                />
+              )}
             </Box>
           )}
         </Paper>
@@ -1186,155 +1460,319 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
 
       {/* Customers & Invoices Grid */}
       {isValidSellerId && !loadingCustomers && !loadingInvoices && (
-        <Grid container spacing={2} wrap="nowrap" sx={{ overflowX: 'auto' }}>
+        <Grid container spacing={{ xs: 1, md: 1 }} wrap="wrap" sx={{ overflowX: { xs: 'auto', md: 'visible' } }}>
           {/* Customers Panel */}
-          <Grid item xs={12} md={4} sx={{ flex: '0 0 360px', maxWidth: 360 }}>
+          <Grid item xs={12} md={3} sx={{ flex: { xs: '1 1 100%', md: '0 0 400px' }, maxWidth: { xs: '100%', md: 600 }, order: { xs: 2, md: 1 } }}>
             <Paper
               elevation={3}
               sx={{
                 backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                borderRadius: 2,
+                borderRadius: 3,
                 border: darkMode ? '1px solid #333' : 'none',
                 overflow: 'hidden',
+                boxShadow: darkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.08)',
+                height: { xs: 'auto', md: '1000px' },
+                maxHeight: { xs: '500px', md: 'none' },
+                maxWidth: { xs: 'calc(90vw - 16px)', sm: '100%', md: 'calc(106vw - 300px)' },
+                width: '100%',
+                overflowX: 'hidden',
+                mx: 'auto',
+                minWidth: 0,
+                position: 'relative',
               }}
             >
-              <Box sx={{ p: 2, borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}` }}>
-                <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
+              <Box sx={{
+                p: { xs: 2, sm: 2.5 },
+                borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                bgcolor: darkMode ? '#252525' : '#fafafa',
+              }}>
+                <Avatar sx={{ bgcolor: '#1976d2', width: { xs: 28, sm: 32 }, height: { xs: 28, sm: 32 } }}>
+                  <PeopleIcon sx={{ fontSize: { xs: 16, sm: 18 } }} />
+                </Avatar>
+                <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#1a1a1a', fontWeight: 600, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
                   Customers ({customers.length})
                 </Typography>
               </Box>
 
               {customers.length === 0 ? (
-                <Box sx={{ p: 3, textAlign: 'center' }}>
-                  <Typography variant="body2" color="textSecondary">
+                <Box sx={{ p: { xs: 3, sm: 4 }, textAlign: 'center' }}>
+                  <Avatar sx={{ bgcolor: darkMode ? '#333' : '#e0e0e0', width: { xs: 56, sm: 64 }, height: { xs: 56, sm: 64 }, mx: 'auto', mb: 2 }}>
+                    <PeopleIcon sx={{ fontSize: { xs: 28, sm: 32 }, color: darkMode ? '#666' : '#999' }} />
+                  </Avatar>
+                  <Typography variant="body2" sx={{ color: darkMode ? '#999' : '#666', fontSize: { xs: '0.875rem', sm: '1rem' } }}>
                     No customers found.
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#777' : '#999', mt: 1, display: 'block', fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Try adjusting your search filters
                   </Typography>
                 </Box>
               ) : (
-                <TableContainer>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
-                        <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Name</TableCell>
-                        <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', textAlign: 'center' }}>Contact Info</TableCell>
-                        <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Invoices</TableCell>
-                        <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Refunds</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {customers.map((cust, idx) => {
-                        // Count refund invoices for this customer
-                        const refundCount = (cust.invoices || []).filter(inv => inv.refunds && inv.refunds.length > 0).length;
-                        return (
-                          <TableRow
-                            key={idx}
-                            onClick={() => openCustomer(cust)}
-                            sx={{
-                              '&:hover': {
-                                backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                                cursor: 'pointer',
-                                transition: 'background-color 0.2s ease',
-                              },
-                              backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                              borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                            }}
-                          >
-                            <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                              {cust.name}
-                            </TableCell>
-                            <TableCell sx={{ textAlign: 'center' }}>
-                              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', alignItems: 'center' }}>
-                                {cust.email && (
-                                  <Tooltip title={cust.email}>
-                                    <EmailIcon sx={{ fontSize: '1.2rem', color: '#1976d2', cursor: 'pointer' }} />
-                                  </Tooltip>
+                <>
+                  <Box sx={{
+                    px: { xs: 1.5, sm: 2 },
+                    py: { xs: 1, sm: 1.5 },
+                    bgcolor: darkMode ? '#1e1e1e' : '#fff',
+                    borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}>
+                    <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                      Showing {customers.length} customers
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                      Scroll to view all ↓
+                    </Typography>
+                  </Box>
+                  <TableContainer
+                    sx={{
+                      overflowX: 'hidden',
+                      overflowY: 'auto',
+                      maxHeight: { xs: '400px', md: 'calc(100vh - 400px)' },
+                      minHeight: { xs: '300px', md: 1000 },
+                      '&::-webkit-scrollbar': {
+                        width: { xs: '6px', md: '8px' },
+                      },
+                      '&::-webkit-scrollbar-track': {
+                        backgroundColor: darkMode ? '#2a2a2a' : '#f1f1f1',
+                        borderRadius: '4px',
+                      },
+                      '&::-webkit-scrollbar-thumb': {
+                        backgroundColor: darkMode ? '#666' : '#888',
+                        borderRadius: '4px',
+                        '&:hover': {
+                          backgroundColor: darkMode ? '#888' : '#666',
+                        },
+                      },
+                    }}
+                  >
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
+                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '0.75rem', sm: '0.875rem' }, py: { xs: 1, sm: 1.5 }, px: { xs: 1, sm: 1.5 } }}>Name</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#1a1a1a', textAlign: 'center', fontSize: { xs: '0.75rem', sm: '0.875rem' }, py: { xs: 1, sm: 1.5 }, px: { xs: 0.5, sm: 1 } }}>Contact</TableCell>
+                          <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '0.75rem', sm: '0.875rem' }, py: { xs: 1, sm: 1.5 }, px: { xs: 0.5, sm: 1 } }}>Invoices</TableCell>
+                          <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#1a1a1a', fontSize: { xs: '0.75rem', sm: '0.875rem' }, py: { xs: 1, sm: 1.5 }, px: { xs: 0.5, sm: 1 } }}>Refunds</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {customers.map((cust, idx) => {
+                          // Count refund invoices for this customer
+                          const refundCount = (cust.invoices || []).filter(inv => inv.refunds && inv.refunds.length > 0).length;
+                          return (
+                            <TableRow
+                              key={idx}
+                              onClick={() => openCustomer(cust)}
+                              sx={{
+                                '&:hover': {
+                                  backgroundColor: darkMode ? '#2a2a2a' : '#e3f2fd',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  transform: 'scale(1.01)',
+                                },
+                                backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                              }}
+                            >
+                              <TableCell sx={{
+                                color: darkMode ? '#fff' : '#1a1a1a',
+                                fontWeight: 500,
+                                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                py: { xs: 1, sm: 1.5 },
+                                px: { xs: 1, sm: 1.5 },
+                              }}>
+                                {cust.name}
+                              </TableCell>
+                              <TableCell sx={{ textAlign: 'center', py: { xs: 1, sm: 1.5 }, px: { xs: 0.5, sm: 1 } }}>
+                                <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center', alignItems: 'center' }}>
+                                  {cust.email && (
+                                    <Tooltip title={cust.email}>
+                                      <Avatar sx={{ width: { xs: 24, sm: 28 }, height: { xs: 24, sm: 28 }, bgcolor: '#1976d2' }}>
+                                        <EmailIcon sx={{ fontSize: { xs: 14, sm: 16 } }} />
+                                      </Avatar>
+                                    </Tooltip>
+                                  )}
+                                  {cust.contact && (
+                                    <Tooltip title={cust.contact}>
+                                      <Avatar sx={{ width: { xs: 24, sm: 28 }, height: { xs: 24, sm: 28 }, bgcolor: '#388e3c' }}>
+                                        <PhoneIcon sx={{ fontSize: { xs: 14, sm: 16 } }} />
+                                      </Avatar>
+                                    </Tooltip>
+                                  )}
+                                  {!cust.email && !cust.contact && (
+                                    <Typography variant="caption" sx={{ color: darkMode ? '#666' : '#ccc', fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                                      -
+                                    </Typography>
+                                  )}
+                                </Box>
+                              </TableCell>
+                              <TableCell align="center" sx={{
+                                color: darkMode ? '#fff' : '#1a1a1a',
+                                fontWeight: 500,
+                                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                py: { xs: 1, sm: 1.5 },
+                                px: { xs: 0.5, sm: 1 },
+                              }}>
+                                {(cust.invoices && cust.invoices.length) || 0}
+                              </TableCell>
+                              <TableCell align="center" sx={{
+                                color: darkMode ? '#fff' : '#1a1a1a',
+                                fontWeight: 500,
+                                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                py: { xs: 1, sm: 1.5 },
+                                px: { xs: 0.5, sm: 1 },
+                              }}>
+                                {refundCount > 0 ? (
+                                  <Chip
+                                    label={refundCount}
+                                    size="small"
+                                    color="error"
+                                    sx={{ height: { xs: 20, sm: 22 }, fontSize: { xs: '0.65rem', sm: '0.75rem' }, fontWeight: 500 }}
+                                  />
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: darkMode ? '#666' : '#ccc', fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>0</Typography>
                                 )}
-                                {cust.contact && (
-                                  <Tooltip title={cust.contact}>
-                                    <PhoneIcon sx={{ fontSize: '1.2rem', color: '#388e3c', cursor: 'pointer' }} />
-                                  </Tooltip>
-                                )}
-                                {!cust.email && !cust.contact && <Typography variant="caption" sx={{ color: darkMode ? '#999' : '#ccc' }}>-</Typography>}
-                              </Box>
-                            </TableCell>
-                            <TableCell align="center" sx={{ color: darkMode ? '#fff' : '#333' }}>{(cust.invoices && cust.invoices.length) || 0}</TableCell>
-                            <TableCell align="center" sx={{ color: darkMode ? '#fff' : '#333' }}>{refundCount}</TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </>
               )}
             </Paper>
           </Grid>
 
           {/* Invoices & Analytics Panel */}
-          <Grid item xs={12} md={8} sx={{ flex: '1 1 800px', minWidth: 600 }}>
+          <Grid item xs={12} md={10} sx={{ flex: { xs: '1 1 100%', md: '1 1 800px' }, minWidth: { xs: '100%', md: 600 }, order: { xs: 1, md: 2 } }}>
             <Paper
               elevation={3}
               sx={{
                 backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                borderRadius: 2,
+                borderRadius: 3,
                 border: darkMode ? '1px solid #333' : 'none',
                 overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                maxWidth: { xs: 'calc(90vw - 16px)', sm: '100%', md: 'calc(106vw - 300px)' },
+                width: '100%',
+                overflowX: 'hidden',
+                mx: 'auto',
+                minWidth: 0,
+                position: 'relative',
+                boxShadow: darkMode ? '0 4px 20px rgba(0,0,0,0.5)' : '0 4px 20px rgba(0,0,0,0.08)',
               }}
             >
-              <Box sx={{ p: 2, borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}` }}>
-                <Grid container alignItems="center" spacing={2} justifyContent="space-between">
-                  <Grid item xs={12} md={7}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                        {selectedCustomer ? `Invoices - ${selectedCustomer.name}` : 'Invoices'}
-                      </Typography>
+              <Box sx={{
+                p: { xs: 2, sm: 2.5 },
+                borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                bgcolor: darkMode ? '#252525' : '#fafafa',
+              }}>
+                <Grid container alignItems={{ xs: 'flex-start', sm: 'center' }} spacing={{ xs: 1.5, sm: 2 }} justifyContent="space-between">
+                  <Grid item xs={12} sm={8} md={7}>
+                    <Box sx={{ display: 'flex', alignItems: { xs: 'flex-start', sm: 'center' }, gap: { xs: 1, sm: 1.5 }, flexDirection: { xs: 'column', sm: 'row' }, alignItems: { xs: 'flex-start', sm: 'center' } }}>
+                      <Avatar sx={{ bgcolor: '#1976d2', width: { xs: 28, sm: 32 }, height: { xs: 28, sm: 32 } }}>
+                        <ReceiptIcon sx={{ fontSize: { xs: 16, sm: 18 } }} />
+                      </Avatar>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, width: '100%' }}>
+                        <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#1a1a1a', fontWeight: 600, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
+                          {selectedCustomer ? `Invoices - ${selectedCustomer.name}` : 'Invoices'}
+                        </Typography>
 
-                      {selectedCustomer && (
-                        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}>
-                          <Typography variant="body2" sx={{ color: darkMode ? '#ddd' : '#555' }}>Contact: {selectedCustomer.contact || '-'}</Typography>
-                          <Typography variant="body2" sx={{ color: darkMode ? '#ddd' : '#555' }}>Email: {selectedCustomer.email || '-'}</Typography>
-                          <Typography variant="body2" sx={{ color: darkMode ? '#ddd' : '#555' }}>Invoices: {(selectedCustomer.invoices || []).length || 0}</Typography>
-                        </Box>
-                      )}
+                        {selectedCustomer && (
+                          <Box sx={{ display: 'flex', gap: { xs: 1, sm: 2 }, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', display: 'flex', alignItems: 'center', gap: 0.5, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                              <PhoneIcon sx={{ fontSize: { xs: 12, sm: 14 } }} /> {selectedCustomer.contact || '-'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', display: 'flex', alignItems: 'center', gap: 0.5, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                              <EmailIcon sx={{ fontSize: { xs: 12, sm: 14 } }} /> {selectedCustomer.email || '-'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: darkMode ? '#aaa' : '#666', display: 'flex', alignItems: 'center', gap: 0.5, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                              <ReceiptIcon sx={{ fontSize: { xs: 12, sm: 14 } }} /> {(selectedCustomer.invoices || []).length || 0} invoices
+                            </Typography>
+                          </Box>
+                        )}
+                      </Box>
                     </Box>
                   </Grid>
 
-                  <Grid item xs={12} md={5}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1.5 }}>
+                  <Grid item xs={12} sm={4} md={5}>
+                    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, alignItems: { xs: 'flex-start', sm: 'center' }, gap: { xs: 1.5, sm: 1.5 }, justifyContent: { xs: 'flex-start', sm: 'flex-end' }, flexWrap: 'wrap' }}>
                       {/* Progress Circle with Legend */}
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
-                        <Box sx={{ position: 'relative', width: 80, height: 80 }}>
-                          <CircularProgress variant="determinate" value={100} size={80} thickness={6} sx={{ color: '#d32f2f' }} />
+                      {/* Progress Circle with Legend */}
+                      {/* Progress Circle with Legend */}
+                      <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: { xs: 1.5, sm: 2 },
+                        width: { xs: '100%', sm: 'auto' },
+                        justifyContent: { xs: 'flex-start', sm: 'flex-end' },
+                      }}>
+
+                        {/* Ring — hidden on mobile */}
+                        <Box sx={{ display: { xs: 'none', sm: 'block' }, position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
+                          <CircularProgress
+                            variant="determinate"
+                            value={100}
+                            size={80}
+                            thickness={5}
+                            sx={{ color: '#d32f2f' }}
+                          />
                           <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                            {/* amber circle shows paid+partial; percentPaid already includes partial */}
-                            <CircularProgress variant="determinate" value={paymentProgress.percentPaid} size={80} thickness={6} sx={{ color: '#ffb300' }} />
+                            <CircularProgress
+                              variant="determinate"
+                              value={paymentProgress.percentPaid}
+                              size={80}
+                              thickness={5}
+                              sx={{ color: '#ffb300' }}
+                            />
                           </Box>
                           <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                            <CircularProgress variant="determinate" value={paymentProgress.percentPaidOnly} size={80} thickness={6} sx={{ color: '#388e3c' }} />
+                            <CircularProgress
+                              variant="determinate"
+                              value={paymentProgress.percentPaidOnly}
+                              size={80}
+                              thickness={5}
+                              sx={{ color: '#388e3c' }}
+                            />
                           </Box>
                           <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{paymentProgress.percentPaidOnly}%</Typography>
-                            <Typography variant="caption" sx={{ fontSize: '10px' }}>Paid</Typography>
+                            <Typography sx={{ fontWeight: 500, fontSize: '1rem', color: darkMode ? '#fff' : '#1a1a1a', lineHeight: 1.1 }}>
+                              {paymentProgress.percentPaidOnly}%
+                            </Typography>
+                            <Typography sx={{ fontSize: '10px', color: darkMode ? '#aaa' : '#666' }}>
+                              paid
+                            </Typography>
                           </Box>
                         </Box>
 
-                        {/* Horizontal Legend */}
-                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', ml: 1, flexDirection: 'column' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Box sx={{ width: 12, height: 12, backgroundColor: '#388e3c', borderRadius: '50%' }} />
-                            <Typography variant="caption" sx={{ fontSize: '11px' }}>Paid {paymentProgress.percentPaidOnly}%</Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Box sx={{ width: 12, height: 12, backgroundColor: '#ffb300', borderRadius: '50%' }} />
-                            <Typography variant="caption" sx={{ fontSize: '11px' }}>Partial {paymentProgress.percentPartial}%</Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Box sx={{ width: 12, height: 12, backgroundColor: '#d32f2f', borderRadius: '50%' }} />
-                            <Typography variant="caption" sx={{ fontSize: '11px' }}>Unpaid {paymentProgress.percentUnpaid}%</Typography>
-                          </Box>
+                        {/* Legend — always vertical, label left / value right */}
+                        <Box sx={{ flex: { xs: 1, sm: 'none' }, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                          {[
+                            { color: '#388e3c', label: 'Paid', value: paymentProgress.percentPaidOnly },
+                            { color: '#ffb300', label: 'Partial', value: paymentProgress.percentPartial },
+                            { color: '#d32f2f', label: 'Unpaid', value: paymentProgress.percentUnpaid },
+                          ].map(({ color, label, value }) => (
+                            <Box key={label} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                                <Box sx={{ width: 10, height: 10, backgroundColor: color, borderRadius: '50%', flexShrink: 0 }} />
+                                <Typography variant="caption" sx={{ fontSize: '0.75rem', color: darkMode ? '#aaa' : '#666' }}>
+                                  {label}
+                                </Typography>
+                              </Box>
+                              <Typography variant="caption" sx={{ fontSize: '0.75rem', fontWeight: 500, color: darkMode ? '#fff' : '#1a1a1a' }}>
+                                {value}%
+                              </Typography>
+                            </Box>
+                          ))}
                         </Box>
+
                       </Box>
-
-                      {/* Print Button Below Progress Circle */}
+                      {/* Print Button - Full width on mobile */}
                       <Button
                         size="small"
                         variant="contained"
@@ -1356,36 +1794,49 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                           setTimeout(() => printWindow.print(), 250);
                         }}
                         disabled={invoices.length === 0}
-                        sx={{ textTransform: 'none', borderRadius: 1 }}
+                        sx={{
+                          textTransform: 'none',
+                          borderRadius: 2,
+                          fontWeight: 500,
+                          boxShadow: '0 2px 8px rgba(25, 118, 210, 0.3)',
+                          '&:hover': { boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)' },
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                          px: { xs: 1, sm: 2 },
+                          width: { xs: '100%', sm: 'auto' },
+                        }}
                       >
-                        Print Invoices
+                        Print
                       </Button>
                     </Box>
                   </Grid>
                 </Grid>
 
                 {/* Invoice-level search and date filters */}
-                <Grid container spacing={2} alignItems="center" sx={{ mt: 1 }}>
-                  <Grid item xs={12} md={5}>
+                <Grid container spacing={{ xs: 1, sm: 2 }} alignItems="flex-end" sx={{ mt: { xs: 1.5, sm: 2 }, pt: { xs: 1.5, sm: 2 }, borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}` }}>
+                  <Grid item xs={12} sm={6} md={3}>
                     <TextField
                       fullWidth
                       label="Search Invoice"
                       value={invoiceQuery}
                       onChange={e => setInvoiceQuery(e.target.value)}
-                      placeholder="Search by invoice id (comma-separated, e.g., ba87b4, db5df8)..."
+                      placeholder="Search by invoice id..."
                       variant="outlined"
                       size="small"
                       onKeyPress={e => e.key === 'Enter' && handleInvoiceSearch()}
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                          borderRadius: 2,
                           '&:hover fieldset': { borderColor: '#1976d2' },
+                          '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
                         },
+                        '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
                       }}
                     />
                   </Grid>
 
-                  <Grid item xs={12} md={3}>
+                  <Grid item xs={6} sm={3} md={2.5}>
                     <TextField
                       fullWidth
                       type="date"
@@ -1398,12 +1849,17 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                          borderRadius: 2,
+                          '&:hover fieldset': { borderColor: '#1976d2' },
+                          '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
                         },
+                        '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
                       }}
                     />
                   </Grid>
 
-                  <Grid item xs={12} md={3}>
+                  <Grid item xs={6} sm={3} md={2.5}>
                     <TextField
                       fullWidth
                       type="date"
@@ -1416,235 +1872,380 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                          borderRadius: 2,
+                          '&:hover fieldset': { borderColor: '#1976d2' },
+                          '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
                         },
+                        '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
                       }}
                     />
                   </Grid>
 
-                  <Grid item xs={12} md={1}>
+                  <Grid item xs={6} sm={3} md={2}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Payment Status"
+                      value={paymentStatusFilter}
+                      onChange={e => setPaymentStatusFilter(e.target.value)}
+                      variant="outlined"
+                      size="small"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                          borderRadius: 2,
+                          '&:hover fieldset': { borderColor: '#1976d2' },
+                          '&.Mui-focused fieldset': { borderColor: '#1976d2', borderWidth: 2 },
+                        },
+                        '& .MuiInputLabel-root': { color: darkMode ? '#aaa' : '#666' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#1976d2' },
+                      }}
+                    >
+                      <MenuItem value="">All Status</MenuItem>
+                      <MenuItem value="Paid">Paid</MenuItem>
+                      <MenuItem value="Partial">Partial</MenuItem>
+                      <MenuItem value="Unpaid">Unpaid</MenuItem>
+                    </TextField>
+                  </Grid>
+
+                  <Grid item xs={6} sm={3} md={2}>
                     <Button
                       fullWidth
                       variant="contained"
                       size="small"
                       onClick={handleApplyDateFilter}
-                      sx={{ height: '40px' }}
+                      sx={{
+                        height: '40px',
+                        borderRadius: 2,
+                        textTransform: 'none',
+                        fontWeight: 500,
+                        boxShadow: '0 2px 8px rgba(25, 118, 210, 0.3)',
+                        '&:hover': { boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)' },
+                        fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                      }}
                     >
                       Apply
+                    </Button>
+                  </Grid>
+
+                  <Grid item xs={6} sm={3} md={2}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      size="small"
+                      onClick={() => {
+                        setStartDate('');
+                        setEndDate('');
+                        setInvoiceQuery('');
+                        setPaymentStatusFilter('');
+                      }}
+                      sx={{
+                        height: '40px',
+                        borderRadius: 2,
+                        textTransform: 'none',
+                        fontWeight: 500,
+                        borderColor: darkMode ? '#555' : '#ddd',
+                        color: darkMode ? '#fff' : '#666',
+                        '&:hover': { borderColor: '#d32f2f', color: '#d32f2f' },
+                        fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                      }}
+                    >
+                      Clear
                     </Button>
                   </Grid>
                 </Grid>
               </Box>
 
-              {invoices.length === 0 ? (
-                <Box sx={{ p: 3, textAlign: 'center' }}>
-                  <Typography variant="body2" color="textSecondary">
-                    {selectedCustomer || query ? 'No invoices found.' : 'Select a customer to view invoices.'}
-                  </Typography>
-                </Box>
-              ) : (
-                <>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Invoice #</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Date</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Items</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Item Price</TableCell>
-                          <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Qty</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Payment Method</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Status</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Warranty</TableCell>
-                          <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Paid Amount</TableCell>
-
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {invoices.map(inv => {
-                          const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
-                          const itemsList = (inv.items || []).map(i => {
-                            const origQty = Number(i.quantity) || 0;
-                            let refunded = 0;
-                            (inv.refunds || []).forEach(r => {
-                              (r.items || []).forEach(it => {
-                                if (String(it.productId) === String(i.productId)) {
-                                  refunded += Number(it.quantity) || 0;
-                                }
-                              });
-                            });
-                            const remaining = origQty - refunded;
-                            return `${i.productName || i.SKU || '-'} x${remaining}${refunded ? ` (-${refunded} ref)` : ''}`;
-                          }).filter(Boolean).slice(0, 3).join(', ');
-                          const priceList = (inv.items || []).map(i => Number(i.perPiecePrice || 0)).slice(0, 3).map(p => `Rs. ${p.toLocaleString()}`).join(', ');
-
-                          // Calculate warranty status
-                          const created = new Date(inv.createdAt);
-                          const warrantyUntil = new Date(created);
-                          warrantyUntil.setFullYear(warrantyUntil.getFullYear() + 1);
-                          const underWarranty = new Date() <= warrantyUntil;
-
-                          // Build warranty tooltip with claimed items
-                          const perItem = new Map();
-                          (inv.warrantyClaims || []).forEach(wc => {
-                            (wc.items || []).forEach(ci => {
-                              const key = String(ci.productName || ci.SKU || ci.productId || '');
-                              if (!key) return;
-                              const prev = perItem.get(key) || { claimed: 0, firstClaim: null };
-                              const q = Number(ci.quantity) || 0;
-                              prev.claimed += q;
-                              const claimDate = wc.createdAt ? new Date(wc.createdAt) : null;
-                              if (claimDate && (!prev.firstClaim || claimDate < prev.firstClaim)) {
-                                prev.firstClaim = claimDate;
-                              }
-                              perItem.set(key, prev);
-                            });
-                          });
-
-                          const warrantyTooltip = (
-                            <Box sx={{ p: 0.5 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                Warranty details for this invoice
-                              </Typography>
-                              {perItem.size === 0 ? (
-                                <Typography variant="caption" display="block">
-                                  No warranty claims on this invoice.
-                                </Typography>
-                              ) : (
-                                Array.from(perItem.entries()).map(([name, info]) => (
-                                  <Typography key={name} variant="caption" display="block">
-                                    {name}: warranty claimed {info.claimed} pcs
-                                    {info.firstClaim
-                                      ? ` (first claim: ${info.firstClaim.toLocaleString()})`
-                                      : ''}
-                                  </Typography>
-                                ))
-                              )}
-                            </Box>
-                          );
-
-                          return (
-                            <TableRow
-                              key={inv._id || inv.id}
-                              onClick={() => {
-                                const html = generateInvoiceHTML(inv, products);
-                                setPrintPreviewHtml(html);
-                                setInvoiceDetail(inv);
-                                setInvoiceDialogOpen(true);
-                              }}
-                              sx={{
-                                '&:hover': { backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9', transition: 'background-color 0.2s ease', cursor: 'pointer' },
-                                backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                                borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                              }}
-                            >
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{shortInv}</TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#666', fontSize: '0.875rem' }}>{new Date(inv.date || inv.createdAt).toLocaleString()}</TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{itemsList || '-'}</TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{priceList || '-'}</TableCell>
-                              <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333' }}>{inv.totalQuantity || (inv.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0)}</TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{inv.paymentMethod || '-'}</TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{inv.paymentStatus || '-'}</TableCell>
-                              <TableCell align="center">
-                                {underWarranty ? (
-                                  <Tooltip title={warrantyTooltip} arrow>
-                                    <Chip
-                                      label={` ${warrantyUntil.toLocaleDateString()}`}
-                                      size="small"
-                                      color="success"
-                                      sx={{
-                                        height: 35,
-                                        fontSize: '0.7rem',
-                                        '& .MuiChip-label': { whiteSpace: 'pre-line' },
-                                      }}
-                                    />
-                                  </Tooltip>
-                                ) : (
-                                  <Tooltip title="Warranty expired" arrow>
-                                    <Chip
-                                      label="Warranty expired"
-                                      size="small"
-                                      color="default"
-                                      sx={{ height: 22, fontSize: '0.7rem' }}
-                                    />
-                                  </Tooltip>
-                                )}
-                              </TableCell>
-                              <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>{(() => { const refundTotal = inv.refunds ? inv.refunds.reduce((sum, r) => sum + Number(r.totalRefundAmount || 0), 0) : 0; const actualPaid = Number(inv.totalAmount || inv.netAmount || 0) - refundTotal; return `Rs. ${actualPaid.toLocaleString()}`; })()}</TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-
-                  {/* Summary Footer */}
-                  <Box
-                    sx={{
-                      p: 2,
-                      backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
-                      borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                      textAlign: 'right',
-                    }}
-                  >
+              {/* Scrollable content area for mobile */}
+              <Box sx={{
+                flex: 1,
+                overflowY: { xs: 'auto', md: 'visible' },
+                maxHeight: { xs: 'calc(70vh - 120px)', md: 'none' }
+              }}>
+                {invoices.length === 0 ? (
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
                     <Typography variant="body2" color="textSecondary">
-                      Total Invoices: <strong>{invoices.length}</strong> | Total Amount:{' '}
-                      <strong>Rs. {totalRevenue.toLocaleString()}</strong>
+                      {selectedCustomer || query ? 'No invoices found.' : 'Select a customer to view invoices.'}
                     </Typography>
                   </Box>
+                ) : (
+                  <>
+                    <TableContainer
+                      component={Paper}
+                      sx={{
+                        mb: 2,
+                        width: '100%',
+                        maxWidth: {
+                          xs: 'calc(85vw - 10px)',
+                          sm: '100%',
+                          md: 'calc(103vw - 300px)'
+                        },
+                        minWidth: 0,
+                        overflowX: 'auto',
+                        overflowY: 'hidden',
+                        WebkitOverflowScrolling: 'touch',
+                        position: 'relative',
+                        borderRadius: 2,
+                        boxSizing: 'border-box',
+                        backgroundColor: darkMode ? '#2a2a2a' : '#fff',
+                        border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+                        '&::-webkit-scrollbar': {
+                          height: { xs: '4px', sm: '6px' },
+                        },
+                        '&::-webkit-scrollbar-track': {
+                          backgroundColor: darkMode ? '#1e1e1e' : '#f1f1f1',
+                          borderRadius: '3px',
+                        },
+                        '&::-webkit-scrollbar-thumb': {
+                          backgroundColor: darkMode ? '#666' : '#888',
+                          borderRadius: '3px',
+                        },
+                      }}
+                    >
+                      <Table
+                        stickyHeader
+                        sx={{
+                          minWidth: { xs: 800, sm: '100%', md: '100%' }, // Only set minWidth for mobile
+                          width: '100%', // Full width for all screen sizes
+                          tableLayout: { xs: 'auto', sm: 'auto', md: 'auto' }, // Auto layout for all sizes
+                          whiteSpace: { xs: 'nowrap', sm: 'nowrap', md: 'nowrap' },
+                          minHeight: 1,
+                        }}
+                      >
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
+                            <TableCell sx={{
+                              fontWeight: 'bold',
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                              padding: { xs: '8px 6px', sm: '12px 16px' },
+                              position: 'sticky',
+                              left: 0,
+                              backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                              zIndex: 3,
+                              boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                              minWidth: { xs: 10, sm: 100 }
+                            }}>
+                              Invoice #
+                            </TableCell>
+                            <TableCell sx={{
+                              fontWeight: 'bold',
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                              padding: { xs: '8px 6px', sm: '12px 16px' },
+                              position: 'sticky',
+                              left: { xs: 36, sm: 100 },
+                              backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                              zIndex: 3,
+                              boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                              minWidth: { xs: 50, sm: 120 }
+                            }}>Date</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Items</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Item Price</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Qty</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Payment Method</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Status</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Warranty</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Paid Amount</TableCell>
 
-                  {/* Invoice Detail Dialog */}
-                  <Dialog open={invoiceDialogOpen} onClose={() => setInvoiceDialogOpen(false)} maxWidth="xs" fullWidth>
-                    <DialogTitle>Print Preview</DialogTitle>
-                    <DialogContent dividers sx={{ display: 'flex', justifyContent: 'center' }}>
-                      <iframe
-                        title="invoice-preview"
-                        srcDoc={printPreviewHtml}
-                        style={{ width: '500px', height: '50vh', border: 'none' }}
-                      />
-                    </DialogContent>
-                    <DialogActions>
-                      <Button variant="contained" color="primary" startIcon={<PrintIcon />} onClick={() => {
-                        const w = window.open('', '_blank');
-                        if (!w || !w.document) { alert('Popup blocked. Please allow popups to print.'); return; }
-                        w.document.write(printPreviewHtml);
-                        w.document.close();
-                        setTimeout(() => w.print(), 250);
-                      }}>Print</Button>
-                      <Button onClick={() => setInvoiceDialogOpen(false)}>Close</Button>
-                    </DialogActions>
-                  </Dialog>
-          
-                  <Dialog>
-                    <DialogActions>
-                      <Button onClick={() => { if (invoiceDetail) { handlePrintInvoice(invoiceDetail); } }} startIcon={<PrintIcon />} variant="contained">Print</Button>
-                      <Button onClick={() => setInvoiceDialogOpen(false)}>Close</Button>
-                    </DialogActions>
-                  </Dialog>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {invoices.map(inv => {
+                            const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
+                            const itemsList = (inv.items || []).map(i => {
+                              const origQty = Number(i.quantity) || 0;
+                              let refunded = 0;
+                              (inv.refunds || []).forEach(r => {
+                                (r.items || []).forEach(it => {
+                                  if (String(it.productId) === String(i.productId)) {
+                                    refunded += Number(it.quantity) || 0;
+                                  }
+                                });
+                              });
+                              const remaining = origQty - refunded;
+                              return `${i.productName || i.SKU || '-'} x${remaining}${refunded ? ` (-${refunded} ref)` : ''}`;
+                            }).filter(Boolean).slice(0, 3).join(', ');
+                            const priceList = (inv.items || []).map(i => Number(i.perPiecePrice || 0)).slice(0, 3).map(p => `Rs. ${p.toLocaleString()}`).join(', ');
 
-                  {/* Refund Invoices Section */}
-                  {refundInvoices.length > 0 && (
-                    <Box sx={{ mt: 3 }}>
-                      <Box sx={{ p: 2, borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                          Refund Invoices - {selectedCustomer?.name || 'All Customers'}
-                        </Typography>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          color="error"
-                          startIcon={<PrintIcon />}
-                          onClick={() => {
-                            const dateRange = startDate || endDate ? `From: ${startDate || 'All time'} To: ${endDate || 'Now'}` : 'All Dates';
-                            const customerName = selectedCustomer ? selectedCustomer.name : 'All Customers';
-                            const customerEmail = selectedCustomer?.email || '-';
+                            // Calculate warranty status
+                            const created = new Date(inv.createdAt);
+                            const warrantyUntil = new Date(created);
+                            warrantyUntil.setFullYear(warrantyUntil.getFullYear() + 1);
+                            const underWarranty = new Date() <= warrantyUntil;
 
-                            const refundRowsHTML = refundInvoices.map((inv, idx) => {
-                              const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
-                              const refundDetails = (inv.refunds || []).map(ref => {
-                                const items = (ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ');
-                                return `${ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}: ${items} (${ref.totalRefundQty || 0} pcs) - Rs. ${ref.totalRefundAmount || 0}`;
-                              }).join('<br/>');
-                              return `
+                            // Build warranty tooltip with claimed items
+                            const perItem = new Map();
+                            (inv.warrantyClaims || []).forEach(wc => {
+                              (wc.items || []).forEach(ci => {
+                                const key = String(ci.productName || ci.SKU || ci.productId || '');
+                                if (!key) return;
+                                const prev = perItem.get(key) || { claimed: 0, firstClaim: null };
+                                const q = Number(ci.quantity) || 0;
+                                prev.claimed += q;
+                                const claimDate = wc.createdAt ? new Date(wc.createdAt) : null;
+                                if (claimDate && (!prev.firstClaim || claimDate < prev.firstClaim)) {
+                                  prev.firstClaim = claimDate;
+                                }
+                                perItem.set(key, prev);
+                              });
+                            });
+
+                            const warrantyTooltip = (
+                              <Box sx={{ p: 0.5 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  Warranty details for this invoice
+                                </Typography>
+                                {perItem.size === 0 ? (
+                                  <Typography variant="caption" display="block">
+                                    No warranty claims on this invoice.
+                                  </Typography>
+                                ) : (
+                                  Array.from(perItem.entries()).map(([name, info]) => (
+                                    <Typography key={name} variant="caption" display="block">
+                                      {name}: warranty claimed {info.claimed} pcs
+                                      {info.firstClaim
+                                        ? ` (first claim: ${info.firstClaim.toLocaleString()})`
+                                        : ''}
+                                    </Typography>
+                                  ))
+                                )}
+                              </Box>
+                            );
+
+                            return (
+                              <TableRow
+                                key={inv._id || inv.id}
+                                onClick={() => {
+                                  const html = generateInvoiceHTML(inv, products);
+                                  setPrintPreviewHtml(html);
+                                  setInvoiceDetail(inv);
+                                  setInvoiceDialogOpen(true);
+                                }}
+                                sx={{
+                                  '&:hover': { backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9', transition: 'background-color 0.2s ease', cursor: 'pointer' },
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                                }}
+                              >
+                                <TableCell sx={{
+                                  ...cellSx,
+                                  position: 'sticky',
+                                  left: 0,
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  zIndex: 1,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 10, sm: 100 }
+                                }}>
+                                  {shortInv}
+                                </TableCell>
+                                <TableCell sx={{
+                                  ...cellSx,
+                                  position: 'sticky',
+                                  left: { xs: 36, sm: 100 },
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  zIndex: 1,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 50, sm: 120 }
+                                }}>{new Date(inv.date || inv.createdAt).toLocaleString()}</TableCell>
+                                <TableCell sx={cellSx}>{itemsList || '-'}</TableCell>
+                                <TableCell sx={cellSx}>{priceList || '-'}</TableCell>
+                                <TableCell align="right" sx={cellSx}>{inv.totalQuantity || (inv.items || []).reduce((s, i) => s + (Number(i.quantity) || 0), 0)}</TableCell>
+                                <TableCell sx={cellSx}>{inv.paymentMethod || '-'}</TableCell>
+                                <TableCell sx={cellSx}>{inv.paymentStatus || '-'}</TableCell>
+                                <TableCell align="center">
+                                  {underWarranty ? (
+                                    <Tooltip title={warrantyTooltip} arrow>
+                                      <Chip
+                                        label={` ${warrantyUntil.toLocaleDateString()}`}
+                                        size="small"
+                                        color="success"
+                                        sx={{
+                                          height: 35,
+                                          fontSize: { xs: '0.65rem', sm: '0.7rem' },
+                                          '& .MuiChip-label': { whiteSpace: 'pre-line' },
+                                        }}
+                                      />
+                                    </Tooltip>
+                                  ) : (
+                                    <Tooltip title="Warranty expired" arrow>
+                                      <Chip
+                                        label="Warranty expired"
+                                        size="small"
+                                        color="default"
+                                        sx={{ height: 22, fontSize: { xs: '0.65rem', sm: '0.7rem' } }}
+                                      />
+                                    </Tooltip>
+                                  )}
+                                </TableCell>
+                                <TableCell align="right" sx={cellSx}>{(() => { const refundTotal = inv.refunds ? inv.refunds.reduce((sum, r) => sum + Number(r.totalRefundAmount || 0), 0) : 0; const actualPaid = Number(inv.netAmount || inv.totalAmount || 0) - refundTotal; return `Rs. ${actualPaid.toLocaleString()}`; })()}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+
+                    {/* Summary Footer */}
+                    <Box
+                      sx={{
+                        p: 2,
+                        backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                        borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                        textAlign: 'right',
+                      }}
+                    >
+                      <Typography variant="body2" color="textSecondary">
+                        Total Invoices: <strong>{invoices.length}</strong> | Total Amount:{' '}
+                        <strong>Rs. {totalRevenue.toLocaleString()}</strong>
+                      </Typography>
+                    </Box>
+
+                    {/* Invoice Detail Dialog */}
+                    <Dialog open={invoiceDialogOpen} onClose={() => setInvoiceDialogOpen(false)} maxWidth="xs" fullWidth>
+                      <DialogTitle>Print Preview</DialogTitle>
+                      <DialogContent dividers sx={{ display: 'flex', justifyContent: 'center' }}>
+                        <iframe
+                          title="invoice-preview"
+                          srcDoc={printPreviewHtml}
+                          style={{ width: '500px', height: '50vh', border: 'none' }}
+                        />
+                      </DialogContent>
+                      <DialogActions>
+                        <Button variant="contained" color="primary" startIcon={<PrintIcon />} onClick={() => {
+                          const w = window.open('', '_blank');
+                          if (!w || !w.document) { alert('Popup blocked. Please allow popups to print.'); return; }
+                          w.document.write(printPreviewHtml);
+                          w.document.close();
+                          setTimeout(() => w.print(), 250);
+                        }}>Print</Button>
+                        <Button onClick={() => setInvoiceDialogOpen(false)}>Close</Button>
+                      </DialogActions>
+                    </Dialog>
+
+                    {/* Refund Invoices Section */}
+                    {refundInvoices.length > 0 && (
+                      <Box sx={{ mt: 3 }}>
+                        <Box sx={{ p: 2, borderBottom: `2px solid ${darkMode ? '#333' : '#e0e0e0'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="h6" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
+                            Refund Invoices - {selectedCustomer?.name || 'All Customers'}
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="error"
+                            startIcon={<PrintIcon />}
+                            onClick={() => {
+                              const dateRange = startDate || endDate ? `From: ${startDate || 'All time'} To: ${endDate || 'Now'}` : 'All Dates';
+                              const customerName = selectedCustomer ? selectedCustomer.name : 'All Customers';
+                              const customerEmail = selectedCustomer?.email || '-';
+
+                              const refundRowsHTML = refundInvoices.map((inv, idx) => {
+                                const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
+                                const refundDetails = (inv.refunds || []).map(ref => {
+                                  const items = (ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ');
+                                  return `${ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}: ${items} (${ref.totalRefundQty || 0} pcs) - Rs. ${ref.totalRefundAmount || 0}`;
+                                }).join('<br/>');
+                                return `
                                 <tr>
                                   <td style="padding:10px;border-bottom:1px solid #ddd;text-align:center;">${idx + 1}</td>
                                   <td style="padding:10px;border-bottom:1px solid #ddd;font-weight:bold;">${shortInv}</td>
@@ -1654,9 +2255,9 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                                   <td style="padding:10px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;">Rs. ${(inv.refunds || []).reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0).toLocaleString()}</td>
                                 </tr>
                               `;
-                            }).join('');
+                              }).join('');
 
-                            const html = `
+                              const html = `
                               <html>
                                 <head>
                                   <title>Refund Invoices Report</title>
@@ -1720,241 +2321,331 @@ const SellerClientDetail = ({ sellerId: propSellerId }) => {
                                 </body>
                               </html>
                             `;
-                            const printWindow = window.open('', '_blank');
-                            if (!printWindow || !printWindow.document) {
-                              alert('Popup blocked. Please allow popups to print.');
-                              return;
-                            }
-                            printWindow.document.write(html);
-                            printWindow.document.close();
-                            setTimeout(() => printWindow.print(), 250);
+                              const printWindow = window.open('', '_blank');
+                              if (!printWindow || !printWindow.document) {
+                                alert('Popup blocked. Please allow popups to print.');
+                                return;
+                              }
+                              printWindow.document.write(html);
+                              printWindow.document.close();
+                              setTimeout(() => printWindow.print(), 250);
+                            }}
+                            sx={{ textTransform: 'none', borderRadius: 1 }}
+                          >
+                            Print Refund Invoices
+                          </Button>
+                        </Box>
+
+                        <TableContainer
+                          component={Paper}
+                          sx={{
+                            overflowX: { xs: 'auto', md: 'visible' },
+                            overflowY: 'hidden',
+                            WebkitOverflowScrolling: 'touch',
+                            maxWidth: {
+                              xs: 'calc(85vw - 10px)',
+                              sm: '100%',
+                              md: 'calc(103vw - 300px)'
+                            },
+                            width: '100%',
+                            minWidth: 0,
+                            position: 'relative',
+                            borderRadius: 2,
+                            boxSizing: 'border-box',
+                            backgroundColor: darkMode ? '#2a2a2a' : '#fff',
+                            border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+                            '&::-webkit-scrollbar': {
+                              height: { xs: '4px', sm: '6px' },
+                            },
+                            '&::-webkit-scrollbar-track': {
+                              backgroundColor: darkMode ? '#1e1e1e' : '#f1f1f1',
+                              borderRadius: '3px',
+                            },
+                            '&::-webkit-scrollbar-thumb': {
+                              backgroundColor: darkMode ? '#666' : '#888',
+                              borderRadius: '3px',
+                            },
                           }}
-                          sx={{ textTransform: 'none', borderRadius: 1 }}
                         >
-                          Print Refund Invoices
-                        </Button>
-                      </Box>
+                          <Table
+                            stickyHeader
+                            sx={{
+                              minWidth: { xs: 800, sm: '100%', md: '100%' },
+                              width: '100%',
+                              tableLayout: { xs: 'auto', sm: 'auto', md: 'auto' },
+                              whiteSpace: { xs: 'nowrap', sm: 'nowrap', md: 'nowrap' },
+                              minHeight: 1,
+                            }}
+                          >
+                            <TableHead>
+                              <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
+                                <TableCell sx={{
+                                  fontWeight: 'bold',
+                                  fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                  padding: { xs: '8px 6px', sm: '12px 16px' },
+                                  position: 'sticky',
+                                  left: 0,
+                                  backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                                  zIndex: 3,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 10, sm: 100 }
+                                }}>Invoice #</TableCell>
+                                <TableCell sx={{
+                                  fontWeight: 'bold',
+                                  fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                  padding: { xs: '8px 6px', sm: '12px 16px' },
+                                  position: 'sticky',
+                                  left: { xs: 36, sm: 100 },
+                                  backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                                  zIndex: 3,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 50, sm: 120 }
+                                }}>Date</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Original Items</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Refund Details</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Refund Amount</TableCell>
+                                <TableCell align="center" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Actions</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {refundInvoices.map((inv, idx) => {
+                                const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
+                                const originalItems = (inv.items || []).map(i => i.productName || i.SKU || '').filter(Boolean).join(', ');
+                                const totalRefundAmount = (inv.refunds || []).reduce((sum, r) => sum + (Number(r.totalRefundAmount) || 0), 0);
 
-                      <TableContainer>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
-                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Invoice #</TableCell>
-                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Date</TableCell>
-                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Original Items</TableCell>
-                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Refund Details</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Refund Amount</TableCell>
-                              <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Actions</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {refundInvoices.map((inv, idx) => {
-                              const shortInv = inv.invoiceNumber || (inv._id ? inv._id.toString().slice(-6) : '-');
-                              const originalItems = (inv.items || []).map(i => i.productName || i.SKU || '').filter(Boolean).join(', ');
-                              const totalRefundAmount = (inv.refunds || []).reduce((sum, r) => sum + (Number(r.totalRefundAmount) || 0), 0);
-
-                              return (
-                                <TableRow
-                                  key={inv._id || idx}
-                                  sx={{
-                                    '&:hover': { backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9', transition: 'background-color 0.2s ease' },
-                                    backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                                    borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                                  }}
-                                >
-                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{shortInv}</TableCell>
-                                  <TableCell sx={{ color: darkMode ? '#fff' : '#666', fontSize: '0.875rem' }}>{new Date(inv.date || inv.createdAt).toLocaleString()}</TableCell>
-                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>{originalItems || '-'}</TableCell>
-                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontSize: '0.85rem' }}>
-                                    {(inv.refunds || []).map((ref, ridx) => (
-                                      <Box key={ridx} sx={{ mb: 0.5 }}>
-                                        <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
-                                          {ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}
-                                        </Typography>
-                                        <Typography variant="caption" sx={{ display: 'block' }}>
-                                          {(ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ')} ({ref.totalRefundQty || 0} pcs)
-                                        </Typography>
-                                        {ref.reason && (
-                                          <Typography variant="caption" sx={{ display: 'block', color: 'error.main' }}>
-                                            Reason: {ref.reason}
+                                return (
+                                  <TableRow
+                                    key={inv._id || idx}
+                                    sx={{
+                                      '&:hover': { backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9', transition: 'background-color 0.2s ease' },
+                                      backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                      borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                                    }}
+                                  >
+                                    <TableCell sx={{
+                                      color: darkMode ? '#fff' : '#333',
+                                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                      padding: { xs: '8px 6px', sm: '12px 16px' },
+                                      position: 'sticky',
+                                      left: 0,
+                                      backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                      zIndex: 2,
+                                      minWidth: { xs: 10, sm: 100 }
+                                    }}>{shortInv}</TableCell>
+                                    <TableCell sx={{
+                                      color: darkMode ? '#fff' : '#666',
+                                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                      padding: { xs: '8px 6px', sm: '12px 16px' },
+                                      position: 'sticky',
+                                      left: { xs: 36, sm: 100 },
+                                      backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                      zIndex: 2,
+                                      minWidth: { xs: 50, sm: 120 },
+                                      maxWidth: { xs: 80, sm: 120, md: 160 },
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}>{new Date(inv.date || inv.createdAt).toLocaleString()}</TableCell>
+                                    <TableCell sx={{
+                                      color: darkMode ? '#fff' : '#333',
+                                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                                      padding: { xs: '8px 6px', sm: '12px 16px' },
+                                      maxWidth: { xs: 100, sm: 150, md: 200 },
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}>{originalItems || '-'}</TableCell>
+                                    <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>
+                                      {(inv.refunds || []).map((ref, ridx) => (
+                                        <Box key={ridx} sx={{ mb: 0.5 }}>
+                                          <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
+                                            {ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}
                                           </Typography>
-                                        )}
-                                      </Box>
-                                    ))}
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>Rs. {totalRefundAmount.toLocaleString()}</TableCell>
-                                  <TableCell align="center">
-                                    <Button size="small" variant="outlined" onClick={() => {
-                                      const html = generateRefundInvoicePrintHTML(inv);
-                                      setPrintPreviewHtml(html);
-                                      setInvoiceDetail(inv);
-                                      setInvoiceDialogOpen(true);
-                                    }} sx={{ textTransform: 'none' }}>
-                                      View
-                                    </Button>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                                          <Typography variant="caption" sx={{ display: 'block' }}>
+                                            {(ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ')} ({ref.totalRefundQty || 0} pcs)
+                                          </Typography>
+                                          {ref.reason && (
+                                            <Typography variant="caption" sx={{ display: 'block', color: 'error.main' }}>
+                                              Reason: {ref.reason}
+                                            </Typography>
+                                          )}
+                                        </Box>
+                                      ))}
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500, fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Rs. {totalRefundAmount.toLocaleString()}</TableCell>
+                                    <TableCell align="center" sx={{ padding: { xs: '8px 6px', sm: '12px 16px' } }}>
+                                      <Button size="small" variant="outlined" onClick={() => {
+                                        const html = generateRefundInvoicePrintHTML(inv);
+                                        setPrintPreviewHtml(html);
+                                        setInvoiceDetail(inv);
+                                        setInvoiceDialogOpen(true);
+                                      }} sx={{ textTransform: 'none' }}>
+                                        View
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
 
-                      <Box
-                        sx={{
-                          p: 2,
-                          backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
-                          borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                          textAlign: 'right',
-                        }}
-                      >
-                        <Typography variant="body2" color="textSecondary">
-                          Total Refund Invoices: <strong>{refundInvoices.length}</strong> | Total Refunded:{' '}
-                          <strong>Rs. {refundInvoices.reduce((sum, inv) => sum + (inv.refunds || []).reduce((s, r) => s + (Number(r.totalRefundAmount) || 0), 0), 0).toLocaleString()}</strong>
-                        </Typography>
+                        <Box
+                          sx={{
+                            p: 2,
+                            backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                            borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                            textAlign: 'right',
+                          }}
+                        >
+                          <Typography variant="body2" color="textSecondary">
+                            Total Refund Invoices: <strong>{refundInvoices.length}</strong> | Total Refunded:{' '}
+                            <strong>Rs. {refundInvoices.reduce((sum, inv) => sum + (inv.refunds || []).reduce((s, r) => s + (Number(r.totalRefundAmount) || 0), 0), 0).toLocaleString()}</strong>
+                          </Typography>
+                        </Box>
                       </Box>
+                    )}
+
+                    {/* Monthly & Yearly Progress Overview (moved below grid) */}
+                    <Box sx={{ mt: 2, px: 2, pb: 2 }}>
+                      <Paper elevation={0} sx={{ p: 2, backgroundColor: darkMode ? '#141414' : '#fafafa' }}>
+                        <Typography variant="subtitle1" sx={{ mb: 1, color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>Breakdown Progress</Typography>
+                        <Grid container spacing={{ xs: 2, md: 6 }} alignItems="center">
+                          <Grid item xs={12} md={3}>
+                            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                              {Object.keys(monthlyTotals).length > 0 ? (
+                                <>
+                                  <Box sx={{ position: 'relative', width: 80, height: 80 }}>
+                                    {(() => {
+                                      const topMonth = Object.keys(monthlyTotals)[0];
+                                      const progress = monthlyPaymentProgress[topMonth];
+                                      if (!progress) return null;
+                                      const totalNet = progress.totalNet;
+                                      const paidTotal = progress.paidFull + progress.partialPaid;
+                                      const percentPaid = totalNet > 0 ? Math.round((progress.paidFull / totalNet) * 100) : 0;
+                                      const percentPartial = totalNet > 0 ? Math.round((progress.partialPaid / totalNet) * 100) : 0;
+                                      const percentUnpaid = 100 - percentPaid - percentPartial;
+                                      return (
+                                        <>
+                                          {/* Red base circle (unpaid) */}
+                                          <CircularProgress variant="determinate" value={100} size={80} thickness={6} sx={{ color: '#d32f2f' }} />
+                                          {/* Amber middle circle (partial + paid) */}
+                                          <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
+                                            <CircularProgress variant="determinate" value={percentPartial + percentPaid} size={80} thickness={6} sx={{ color: '#ffb300' }} />
+                                          </Box>
+                                          {/* Green top circle (paid) */}
+                                          <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
+                                            <CircularProgress variant="determinate" value={percentPaid} size={80} thickness={6} sx={{ color: '#388e3c' }} />
+                                          </Box>
+                                          {/* Center text */}
+                                          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                                            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>{percentPaid}%</Typography>
+                                            <Typography variant="caption" sx={{ fontSize: '9px' }}>Paid</Typography>
+                                          </Box>
+                                        </>
+                                      );
+                                    })()}
+                                  </Box>
+                                  <Box sx={{ flex: 1 }}>
+                                    <Typography variant="caption" sx={{ mb: 1 }}>Monthly Breakdown</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                      {Object.entries(monthlyTotals).map(([month, total], i) => {
+                                        const progress = monthlyPaymentProgress[month];
+                                        if (!progress) return null;
+                                        const percentPaid = progress.totalNet > 0 ? Math.round((progress.paidFull / progress.totalNet) * 100) : 0;
+                                        return (
+                                          <Box key={month} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#388e3c', borderRadius: '50%' }} />
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#ffb300', borderRadius: '50%' }} />
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#d32f2f', borderRadius: '50%' }} />
+                                            </Box>
+                                            <Typography variant="caption" sx={{ flex: 1, fontSize: '11px' }}>{month}</Typography>
+                                            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>Rs. {total.toLocaleString()}</Typography>
+                                          </Box>
+                                        );
+                                      })}
+                                    </Box>
+                                  </Box>
+                                </>
+                              ) : (
+                                <Box sx={{ textAlign: 'center', width: '100%' }}>
+                                  <Typography variant="caption" color="textSecondary">No monthly data</Typography>
+                                </Box>
+                              )}
+                            </Box>
+                          </Grid>
+
+                          <Grid item xs={12} md={3}>
+                            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                              {Object.keys(yearlyTotals).length > 0 ? (
+                                <>
+                                  <Box sx={{ position: 'relative', width: 80, height: 80 }}>
+                                    {(() => {
+                                      const topYear = Object.keys(yearlyTotals)[0];
+                                      const progress = yearlyPaymentProgress[topYear];
+                                      if (!progress) return null;
+                                      const totalNet = progress.totalNet;
+                                      const paidTotal = progress.paidFull + progress.partialPaid;
+                                      const percentPaid = totalNet > 0 ? Math.round((progress.paidFull / totalNet) * 100) : 0;
+                                      const percentPartial = totalNet > 0 ? Math.round((progress.partialPaid / totalNet) * 100) : 0;
+                                      const percentUnpaid = 100 - percentPaid - percentPartial;
+                                      return (
+                                        <>
+                                          {/* Red base circle (unpaid) */}
+                                          <CircularProgress variant="determinate" value={100} size={80} thickness={6} sx={{ color: '#d32f2f' }} />
+                                          {/* Amber middle circle (partial + paid) */}
+                                          <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
+                                            <CircularProgress variant="determinate" value={percentPartial + percentPaid} size={80} thickness={6} sx={{ color: '#ffb300' }} />
+                                          </Box>
+                                          {/* Green top circle (paid) */}
+                                          <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
+                                            <CircularProgress variant="determinate" value={percentPaid} size={80} thickness={6} sx={{ color: '#388e3c' }} />
+                                          </Box>
+                                          {/* Center text */}
+                                          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                                            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>{percentPaid}%</Typography>
+                                            <Typography variant="caption" sx={{ fontSize: '9px' }}>Paid</Typography>
+                                          </Box>
+                                        </>
+                                      );
+                                    })()}
+                                  </Box>
+                                  <Box sx={{ flex: 1 }}>
+                                    <Typography variant="caption" sx={{ mb: 1 }}>Yearly Breakdown</Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                      {Object.entries(yearlyTotals).map(([year, total], i) => {
+                                        const progress = yearlyPaymentProgress[year];
+                                        if (!progress) return null;
+                                        const percentPaid = progress.totalNet > 0 ? Math.round((progress.paidFull / progress.totalNet) * 100) : 0;
+                                        return (
+                                          <Box key={year} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#388e3c', borderRadius: '50%' }} />
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#ffb300', borderRadius: '50%' }} />
+                                              <Box sx={{ width: 6, height: 6, backgroundColor: '#d32f2f', borderRadius: '50%' }} />
+                                            </Box>
+                                            <Typography variant="caption" sx={{ flex: 1, fontSize: '11px' }}>{year}</Typography>
+                                            <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>Rs. {total.toLocaleString()}</Typography>
+                                          </Box>
+                                        );
+                                      })}
+                                    </Box>
+                                  </Box>
+                                </>
+                              ) : (
+                                <Box sx={{ textAlign: 'center', width: '100%' }}>
+                                  <Typography variant="caption" color="textSecondary">No yearly data</Typography>
+                                </Box>
+                              )}
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      </Paper>
                     </Box>
-                  )}
-
-                  {/* Monthly & Yearly Progress Overview (moved below grid) */}
-                  <Box sx={{ mt: 2, px: 2, pb: 2 }}>
-                    <Paper elevation={0} sx={{ p: 2, backgroundColor: darkMode ? '#141414' : '#fafafa' }}>
-                      <Typography variant="subtitle1" sx={{ mb: 1, color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>Breakdown Progress</Typography>
-                      <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} md={6}>
-                          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                            {Object.keys(monthlyTotals).length > 0 ? (
-                              <>
-                                <Box sx={{ position: 'relative', width: 80, height: 80 }}>
-                                  {(() => {
-                                    const topMonth = Object.keys(monthlyTotals)[0];
-                                    const progress = monthlyPaymentProgress[topMonth];
-                                    if (!progress) return null;
-                                    const totalNet = progress.totalNet;
-                                    const paidTotal = progress.paidFull + progress.partialPaid;
-                                    const percentPaid = totalNet > 0 ? Math.round((progress.paidFull / totalNet) * 100) : 0;
-                                    const percentPartial = totalNet > 0 ? Math.round((progress.partialPaid / totalNet) * 100) : 0;
-                                    const percentUnpaid = 100 - percentPaid - percentPartial;
-                                    return (
-                                      <>
-                                        {/* Red base circle (unpaid) */}
-                                        <CircularProgress variant="determinate" value={100} size={80} thickness={6} sx={{ color: '#d32f2f' }} />
-                                        {/* Amber middle circle (partial + paid) */}
-                                        <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                                          <CircularProgress variant="determinate" value={percentPartial + percentPaid} size={80} thickness={6} sx={{ color: '#ffb300' }} />
-                                        </Box>
-                                        {/* Green top circle (paid) */}
-                                        <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                                          <CircularProgress variant="determinate" value={percentPaid} size={80} thickness={6} sx={{ color: '#388e3c' }} />
-                                        </Box>
-                                        {/* Center text */}
-                                        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                                          <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>{percentPaid}%</Typography>
-                                          <Typography variant="caption" sx={{ fontSize: '9px' }}>Paid</Typography>
-                                        </Box>
-                                      </>
-                                    );
-                                  })()}
-                                </Box>
-                                <Box sx={{ flex: 1 }}>
-                                  <Typography variant="caption" sx={{ mb: 1 }}>Monthly Breakdown</Typography>
-                                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                                    {Object.entries(monthlyTotals).map(([month, total], i) => {
-                                      const progress = monthlyPaymentProgress[month];
-                                      if (!progress) return null;
-                                      const percentPaid = progress.totalNet > 0 ? Math.round((progress.paidFull / progress.totalNet) * 100) : 0;
-                                      return (
-                                        <Box key={month} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#388e3c', borderRadius: '50%' }} />
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#ffb300', borderRadius: '50%' }} />
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#d32f2f', borderRadius: '50%' }} />
-                                          </Box>
-                                          <Typography variant="caption" sx={{ flex: 1, fontSize: '11px' }}>{month}</Typography>
-                                          <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>Rs. {total.toLocaleString()}</Typography>
-                                        </Box>
-                                      );
-                                    })}
-                                  </Box>
-                                </Box>
-                              </>
-                            ) : (
-                              <Box sx={{ textAlign: 'center', width: '100%' }}>
-                                <Typography variant="caption" color="textSecondary">No monthly data</Typography>
-                              </Box>
-                            )}
-                          </Box>
-                        </Grid>
-
-                        <Grid item xs={12} md={6}>
-                          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                            {Object.keys(yearlyTotals).length > 0 ? (
-                              <>
-                                <Box sx={{ position: 'relative', width: 80, height: 80 }}>
-                                  {(() => {
-                                    const topYear = Object.keys(yearlyTotals)[0];
-                                    const progress = yearlyPaymentProgress[topYear];
-                                    if (!progress) return null;
-                                    const totalNet = progress.totalNet;
-                                    const paidTotal = progress.paidFull + progress.partialPaid;
-                                    const percentPaid = totalNet > 0 ? Math.round((progress.paidFull / totalNet) * 100) : 0;
-                                    const percentPartial = totalNet > 0 ? Math.round((progress.partialPaid / totalNet) * 100) : 0;
-                                    const percentUnpaid = 100 - percentPaid - percentPartial;
-                                    return (
-                                      <>
-                                        {/* Red base circle (unpaid) */}
-                                        <CircularProgress variant="determinate" value={100} size={80} thickness={6} sx={{ color: '#d32f2f' }} />
-                                        {/* Amber middle circle (partial + paid) */}
-                                        <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                                          <CircularProgress variant="determinate" value={percentPartial + percentPaid} size={80} thickness={6} sx={{ color: '#ffb300' }} />
-                                        </Box>
-                                        {/* Green top circle (paid) */}
-                                        <Box sx={{ position: 'absolute', left: 0, top: 0 }}>
-                                          <CircularProgress variant="determinate" value={percentPaid} size={80} thickness={6} sx={{ color: '#388e3c' }} />
-                                        </Box>
-                                        {/* Center text */}
-                                        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                                          <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>{percentPaid}%</Typography>
-                                          <Typography variant="caption" sx={{ fontSize: '9px' }}>Paid</Typography>
-                                        </Box>
-                                      </>
-                                    );
-                                  })()}
-                                </Box>
-                                <Box sx={{ flex: 1 }}>
-                                  <Typography variant="caption" sx={{ mb: 1 }}>Yearly Breakdown</Typography>
-                                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                                    {Object.entries(yearlyTotals).map(([year, total], i) => {
-                                      const progress = yearlyPaymentProgress[year];
-                                      if (!progress) return null;
-                                      const percentPaid = progress.totalNet > 0 ? Math.round((progress.paidFull / progress.totalNet) * 100) : 0;
-                                      return (
-                                        <Box key={year} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#388e3c', borderRadius: '50%' }} />
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#ffb300', borderRadius: '50%' }} />
-                                            <Box sx={{ width: 6, height: 6, backgroundColor: '#d32f2f', borderRadius: '50%' }} />
-                                          </Box>
-                                          <Typography variant="caption" sx={{ flex: 1, fontSize: '11px' }}>{year}</Typography>
-                                          <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '11px' }}>Rs. {total.toLocaleString()}</Typography>
-                                        </Box>
-                                      );
-                                    })}
-                                  </Box>
-                                </Box>
-                              </>
-                            ) : (
-                              <Box sx={{ textAlign: 'center', width: '100%' }}>
-                                <Typography variant="caption" color="textSecondary">No yearly data</Typography>
-                              </Box>
-                            )}
-                          </Box>
-                        </Grid>
-                      </Grid>
-                    </Paper>
-                  </Box>
-                </>
-              )}
+                  </>
+                )}
+              </Box>
             </Paper>
           </Grid>
         </Grid>

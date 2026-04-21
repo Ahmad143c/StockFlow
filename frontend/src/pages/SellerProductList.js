@@ -33,6 +33,12 @@ const SellerProductList = () => {
     return () => { window.removeEventListener('products:changed', onChanged); window.removeEventListener('storage', onStorage); };
   }, [dispatch]);
 
+  const getBarcodeImageUrl = sku => {
+    if (!sku) return '';
+    const code = encodeURIComponent(String(sku).trim());
+    return `https://barcode.tec-it.com/barcode.ashx?data=${code}&code=Code128&translate-esc=on&unit=Fit&width=220&height=60&dpi=96`;
+  };
+
   // Filter products based on search query
   const filteredProducts = items.filter(product => {
     const query = searchQuery.toLowerCase();
@@ -146,6 +152,9 @@ const SellerProductList = () => {
                     <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.9rem' }}>
                       <strong>Vendor:</strong> {product.vendor}
                     </Typography>
+                    {product.warehouseAddress && <Typography variant="body2" sx={{ mb: 0.5, fontSize: '0.9rem' }}>
+                      <strong>Warehouse Address:</strong> {product.warehouseAddress}
+                    </Typography>}
                     <Typography variant="body2" sx={{ fontSize: '0.9rem' }}>
                       <strong>Warranty:</strong>{' '}
                       {Number(product.warrantyMonths || 0) > 0
@@ -194,6 +203,18 @@ const SellerProductList = () => {
                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
                     Added: {new Date(product.dateAdded).toLocaleDateString()}
                   </Typography>
+                  {product.SKU && (
+                    <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                      <img
+                        src={getBarcodeImageUrl(product.SKU)}
+                        alt={`Barcode for ${product.SKU}`}
+                        style={{ width: '100%', maxWidth: '210px', height: 'auto', background: '#fff', padding: '2px', borderRadius: 4 }}
+                      />
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                        {product.SKU}
+                      </Typography>
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
             </Grid>

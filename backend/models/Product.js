@@ -25,6 +25,7 @@ const productSchema = new mongoose.Schema({
   image: { type: String },
   warrantyMonths: { type: Number, default: 12 },
   warrantyClaimedPieces: { type: Number, default: 0 },
+  warehouseAddress: { type: String },
 });
 
 module.exports = mongoose.model('Product', productSchema);

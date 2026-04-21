@@ -43,8 +43,8 @@ const SellerHome = () => {
       } catch (e) {
         setError(
           e.response?.data?.message ||
-            e.message ||
-            'Failed to load seller dashboard data. Please try again.'
+          e.message ||
+          'Failed to load seller dashboard data. Please try again.'
         );
         setSales([]);
       } finally {
@@ -133,7 +133,7 @@ const SellerHome = () => {
   }, [sales]);
 
   return (
-    <Box sx={{ width: '100%', mx: 'auto',  mb: 4, px: { xs: 1, md: 2 } }}>
+    <Box sx={{ width: '100%', mx: 'auto', mb: 4, px: { xs: 1, md: 2 } }}>
       {loading && (
         <Box sx={{ mb: 2 }}>
           <LinearProgress />
@@ -187,6 +187,9 @@ const SellerHome = () => {
             <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
               Rs. {summary.totalRevenue.toLocaleString()}
             </Typography>
+            <Typography variant="caption" color="success.main">
+              All time
+            </Typography>
           </Paper>
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -197,6 +200,9 @@ const SellerHome = () => {
             <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
               Rs. {summary.todayRevenue.toLocaleString()}
             </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {todayKey}
+            </Typography>
           </Paper>
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -206,6 +212,9 @@ const SellerHome = () => {
             </Typography>
             <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
               Rs. {summary.monthRevenue.toLocaleString()}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {monthKey}
             </Typography>
           </Paper>
         </Grid>

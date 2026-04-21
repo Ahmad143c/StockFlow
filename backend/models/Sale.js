@@ -18,6 +18,7 @@ const saleSchema = new mongoose.Schema({
   totalQuantity: { type: Number, required: true },
   totalAmount: { type: Number, required: true },
   discountTotal: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
   netAmount: { type: Number, required: true },
   paymentStatus: { type: String, enum: ['Unpaid', 'Partial', 'Partial Paid', 'Paid', 'Credit'], default: 'Unpaid' },
   paymentMethod: { type: String, enum: ['Cash', 'Jazzcash', 'Bank transfer', 'Easypaisa', 'Cheque'], default: 'Cash' },

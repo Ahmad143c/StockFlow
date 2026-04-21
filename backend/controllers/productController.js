@@ -38,14 +38,16 @@ exports.create = async (req, res) => {
     const sellingPerPiece = Number(body.sellingPerPiece) || 0;
 
     const totalPieces = cartonQuantity * piecesPerCarton + losePieces;
-    const stockQuantity = cartonQuantity + (losePieces > 0 ? 1 : 0);
+    const warrantyClaimedPieces = Number(body.warrantyClaimedPieces) || 0;
+    const availableTotalPieces = totalPieces - warrantyClaimedPieces;
+    const stockQuantity = Math.floor(availableTotalPieces / piecesPerCarton) + (availableTotalPieces % piecesPerCarton > 0 ? 1 : 0);
     const perPieceProfit = sellingPerPiece - costPerPiece;
-    const totalUnitProfit = perPieceProfit * totalPieces;
-    const totalUnitCost = costPerPiece * totalPieces;
+    const totalUnitProfit = perPieceProfit * availableTotalPieces;
+    const totalUnitCost = costPerPiece * availableTotalPieces;
     const costPerCarton = cartonQuantity * piecesPerCarton * costPerPiece;
 
     Object.assign(body, {
-      totalPieces,
+      totalPieces: availableTotalPieces,
       stockQuantity,
       perPieceProfit,
       totalUnitProfit,
@@ -71,14 +73,16 @@ exports.update = async (req, res) => {
     const sellingPerPiece = Number(body.sellingPerPiece) || 0;
 
     const totalPieces = cartonQuantity * piecesPerCarton + losePieces;
-    const stockQuantity = cartonQuantity + (losePieces > 0 ? 1 : 0);
+    const warrantyClaimedPieces = Number(body.warrantyClaimedPieces) || 0;
+    const availableTotalPieces = totalPieces - warrantyClaimedPieces;
+    const stockQuantity = Math.floor(availableTotalPieces / piecesPerCarton) + (availableTotalPieces % piecesPerCarton > 0 ? 1 : 0);
     const perPieceProfit = sellingPerPiece - costPerPiece;
-    const totalUnitProfit = perPieceProfit * totalPieces;
-    const totalUnitCost = costPerPiece * totalPieces;
+    const totalUnitProfit = perPieceProfit * availableTotalPieces;
+    const totalUnitCost = costPerPiece * availableTotalPieces;
     const costPerCarton = cartonQuantity * piecesPerCarton * costPerPiece;
 
     Object.assign(body, {
-      totalPieces,
+      totalPieces: availableTotalPieces,
       stockQuantity,
       perPieceProfit,
       totalUnitProfit,

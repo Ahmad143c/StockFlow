@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { Drawer, List, ListItem, ListItemIcon, ListItemText, Toolbar, Collapse, ListItemButton, Box, Tooltip, IconButton, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useLocation } from 'react-router-dom';
@@ -25,22 +25,26 @@ const SellerSidebar = ({ user, handleLogout }) => {
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isActive = (path) => location.pathname === path;
-  const startsWith = (prefix) => location.pathname.startsWith(prefix);
+  // helpers - memoized
+  const isActive = useCallback((path) => location.pathname === path, [location.pathname]);
+  const startsWith = useCallback((prefix) => location.pathname.startsWith(prefix), [location.pathname]);
 
-  const activeSx = {
+  const activeSx = useMemo(() => ({
     '&.Mui-selected': {
       backgroundColor: '#1976d2',
       color: '#fff',
       '& .MuiListItemIcon-root': { color: '#fff' },
     },
-  };
+    '&.Mui-selected:hover': {
+      backgroundColor: '#1976d2',
+    },
+  }), []);
 
-  const hoverSx = {
+  const hoverSx = useMemo(() => ({
     '&:hover': {
       backgroundColor: '#1565c0',
     },
-  };
+  }), []);
 
   const [openProducts, setOpenProducts] = useState(
     startsWith('/seller/product-list') || startsWith('/seller/product-report')
@@ -53,20 +57,20 @@ const SellerSidebar = ({ user, handleLogout }) => {
     setOpenProducts(startsWith('/seller/product-list') || startsWith('/seller/product-report'));
   }, [location]);
 
-  // Custom style for icon and text spacing
-  const iconTextStyle = {
+  // Custom style for icon and text spacing - memoized
+  const iconTextStyle = useMemo(() => ({
     minWidth: 32,
-  };
+  }), []);
 
-  const handleMouseEnter = () => {
+  const handleMouseEnter = useCallback(() => {
     if (!isMobile) setSidebarOpen(true);
-  };
+  }, [isMobile]);
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = useCallback(() => {
     if (!isMobile) setSidebarOpen(false);
-  };
+  }, [isMobile]);
 
-  const handleDrawerToggle = () => {
+  const handleDrawerToggle = useCallback(() => {
     if (isMobile) {
       setMobileVisible(v => {
         const next = !v;
@@ -74,10 +78,10 @@ const SellerSidebar = ({ user, handleLogout }) => {
         return next;
       });
     }
-  };
+  }, [isMobile]);
 
-  const linkProps = isMobile ? { onClick: handleDrawerToggle } : {};
-  const showLabels = sidebarOpen || (isMobile && mobileVisible && mobileExpanded);
+  const linkProps = useMemo(() => isMobile ? { onClick: handleDrawerToggle } : {}, [isMobile, handleDrawerToggle]);
+  const showLabels = useMemo(() => sidebarOpen || (isMobile && mobileVisible && mobileExpanded), [sidebarOpen, isMobile, mobileVisible, mobileExpanded]);
 
   React.useEffect(() => {
     const handler = () => {
@@ -87,10 +91,24 @@ const SellerSidebar = ({ user, handleLogout }) => {
     return () => window.removeEventListener('toggleSidebar', handler);
   }, [isMobile]);
 
-  const handleLogoutClick = () => {
+  const handleLogoutClick = useCallback(() => {
     if (isMobile) handleDrawerToggle();
     try { if (typeof handleLogout === 'function') handleLogout(); } catch (e) {}
-  };
+  }, [isMobile, handleDrawerToggle]);
+
+  const handleToggleClick = useCallback(() => {
+    if (isMobile) {
+      if (!mobileVisible) {
+        handleDrawerToggle();
+      } else {
+        setMobileExpanded(e => !e);
+      }
+    } else {
+      setSidebarOpen(s => !s);
+    }
+  }, [isMobile, mobileVisible, handleDrawerToggle]);
+
+  const handleProductsToggle = useCallback(() => setOpenProducts(p => !p), []);
 
   return (
     <Box
@@ -122,17 +140,7 @@ const SellerSidebar = ({ user, handleLogout }) => {
       <List>
         {/* Toggle Button */}
         <ListItem disablePadding>
-          <ListItemButton sx={{ pl: 1.5, justifyContent: 'center' }} onClick={() => {
-              if (isMobile) {
-                if (!mobileVisible) {
-                  handleDrawerToggle();
-                } else {
-                  setMobileExpanded(e => !e);
-                }
-              } else {
-                setSidebarOpen(s => !s);
-              }
-            }}>
+          <ListItemButton sx={{ pl: 1.5, justifyContent: 'center' }} onClick={handleToggleClick}>
             <ListItemIcon sx={{ ...iconTextStyle, justifyContent: 'center' }}>
               {sidebarOpen ? <CloseIcon /> : <MenuIcon />}
             </ListItemIcon>
@@ -171,7 +179,7 @@ const SellerSidebar = ({ user, handleLogout }) => {
         {/* Products Section */}
         <Tooltip title={!sidebarOpen ? "Products" : ""} placement="right">
           <ListItem disablePadding>
-            <ListItemButton onClick={() => setOpenProducts(!openProducts)}>
+            <ListItemButton onClick={handleProductsToggle}>
               <ListItemIcon sx={iconTextStyle}><InventoryIcon /></ListItemIcon>
               <ListItemText primary="Products" sx={{ display: showLabels ? 'block' : 'none' }} />
               {sidebarOpen && (openProducts ? <ExpandLess /> : <ExpandMore />)}
@@ -197,20 +205,7 @@ const SellerSidebar = ({ user, handleLogout }) => {
               </ListItemButton>
             </ListItem>
             <ListItem disablePadding>
-              <ListItemButton
-                component={Link} {...linkProps}
-                to="/seller/product-report"
-                selected={isActive('/seller/product-report')}
-                sx={{
-                  ...activeSx,
-                  ...hoverSx,
-                  pl: sidebarOpen ? 4 : 1.5,
-                  justifyContent: sidebarOpen ? 'flex-start' : 'center',
-                }}
-              >
-                <ListItemIcon sx={iconTextStyle}><DescriptionIcon /></ListItemIcon>
-                <ListItemText primary="Product Report" sx={{ display: showLabels ? 'block' : 'none' }} />
-              </ListItemButton>
+              
             </ListItem>
           </List>
         </Collapse>
@@ -274,4 +269,4 @@ const SellerSidebar = ({ user, handleLogout }) => {
   );
 };
 
-export default SellerSidebar;
+export default React.memo(SellerSidebar);

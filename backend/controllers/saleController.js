@@ -40,10 +40,298 @@ async function sendInvoiceEmail(to, subject, htmlBody) {
   }
 }
 
+// Helper: generate invoice HTML (adapted from frontend invoiceUtils.js)
+function generateInvoiceHTML(sale, products = []) {
+  if (!sale || !sale.items) {
+    return `<html><body><h1>Invoice</h1><p>Invalid sale data</p></body></html>`;
+  }
+  
+  const itemsHaveDiscount = (sale.items || []).some(i => Number(i.discount) > 0);
+  // build refund maps keyed by productId/SKU to total refunded qty and amount
+  const refundQtyMap = new Map();
+  const refundAmtMap = new Map();
+  try {
+    (sale.refunds || []).forEach(r => {
+      (r.items || []).forEach(it => {
+        const key = String(it.productId || it.SKU || it._id || '');
+        const qty = Number(it.quantity) || 0;
+        const price = Number(it.perPiecePrice || 0);
+        refundQtyMap.set(key, (refundQtyMap.get(key) || 0) + qty);
+        refundAmtMap.set(key, (refundAmtMap.get(key) || 0) + qty * price);
+      });
+    });
+  } catch (err) {
+    console.error('Error processing refunds:', err);
+    // Continue without refund info
+  }
+
+  // net amount should come from sale if available
+  let netAmount = Number(sale.netAmount) || 0;
+
+  // Subtract global discount if present
+  if (sale.discountAmount && Number(sale.discountAmount) > 0) {
+    netAmount -= Number(sale.discountAmount);
+  }
+
+  // Calculate total selling amount without any discounts
+  const totalWithoutDiscount = (sale.items || []).reduce((s, i) => {
+    const key = String(i.productId || i.SKU || i._id || '');
+    const origQty = Number(i.quantity) || 0;
+    const refundedQty = Number(refundQtyMap.get(key) || 0);
+    const usedQty = Math.max(0, origQty - refundedQty);
+    return s + ((Number(i.perPiecePrice) || 0) * usedQty);
+  }, 0);
+
+  // check if sale has any refunds at all
+  const hasRefunds = (sale.refunds || []).length > 0;
+
+  // helper to compute warranty string for an item
+  const warrantyForItem = (i) => {
+    let warrantyString = 'No warranty';
+    const prod = products.find(p => String(p._id) === String(i.productId || i._id));
+    const months = prod ? Number(prod.warrantyMonths || 0) : 0;
+    if (months > 0) {
+      const saleDate = new Date(sale.createdAt || sale.date || Date.now());
+      const warrantyUntil = new Date(saleDate);
+      warrantyUntil.setMonth(warrantyUntil.getMonth() + months);
+      const now = new Date();
+      if (now <= warrantyUntil) {
+        warrantyString = warrantyUntil.toISOString().split('T')[0];
+      } else {
+        warrantyString = 'Expired';
+      }
+    }
+    return warrantyString;
+  };
+
+  // Generate payment info HTML
+  const paidVal = sale.paymentMethod === 'Cash'
+    ? (sale.cashAmount || sale.paidAmount || 0)
+    : (sale.paidAmount || 0);
+  const changeVal = sale.changeAmount || 0;
+  const discountVal = sale.discountAmount || 0;
+  const grossTotal = netAmount + discountVal;
+  const totalRefundAmount = (sale.refunds || []).reduce((s, r) => s + (Number(r.totalRefundAmount) || 0), 0);
+  let extra = '';
+  if (sale.paymentStatus === 'Partial Paid') {
+    const remaining = Math.max(0, netAmount - (sale.paidAmount || 0));
+    extra = `<div><span>Remaining</span> <span>Rs. ${remaining.toLocaleString()}</span></div>`;
+  } else if (sale.paymentStatus === 'Credit') {
+    extra = `<div><span>Due Date</span> <span>${sale.dueDate ? new Date(sale.dueDate).toISOString().split('T')[0] : '-'}</span></div>`;
+  }
+  const paymentInfoHtml = `
+    ${discountVal > 0 ? `<div><span>Discount Amount</span> <span>Rs. ${Number(discountVal).toLocaleString()}</span></div>` : ''}
+    <div><span>Total Amount</span> <span>Rs. ${Number(grossTotal).toLocaleString()}</span></div>
+    <div><span>Paid Amount</span> <span>Rs. ${Number(paidVal).toLocaleString()}</span></div>
+    ${totalRefundAmount > 0 ? `<div><span>Refunded</span> <span>Rs. ${totalRefundAmount.toLocaleString()}</span></div>` : ''}
+    <div><span>Change</span> <span>Rs. ${Number(changeVal).toLocaleString()}</span></div>
+    ${extra}
+  `;
+
+  return `
+      <html>
+        <head>
+          <title>Invoice #${(sale._id || '').toString().slice(-6)}</title>
+          <style>
+            html, body { width: 100%; margin: 0; padding: 0; }
+            body { font-family: 'Courier New', monospace; margin: 0 auto; padding: 15px; width: 80mm; color: #333; }
+            html { display: flex; justify-content: center; }
+            .header { text-align: center; margin-bottom: 15px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            .header h1 { margin: 0 0 5px 0; font-size: 16px; font-weight: bold; }
+            .header p { margin: 2px 0; font-size: 11px; }
+            .invoice-info { margin: 12px 0; font-size: 11px; }
+            .invoice-info div { margin: 3px 0; }
+            .invoice-info strong { font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+            th { background: #f5f5f5; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 6px 4px; text-align: left; font-weight: bold; font-size: 10px; }
+            td { padding: 5px 4px; border-bottom: 1px solid #eee; font-size: 10px; }
+            tr:last-child td { border-bottom: 1px solid #000; }
+            .text-right { text-align: right !important; }
+            .total-row { border-top: 2px solid #000; border-bottom: 2px solid #000; font-weight: bold; background: #f9f9f9; }
+            .total-amount { font-weight: bold; font-size: 11px; }
+            .payment-info { margin-top: 8px; }
+            .payment-info div { margin: 2px 0; font-size: 10px; display: flex; justify-content: space-between; }
+            .footer { text-align: center; margin-top: 15px; font-size: 11px; font-weight: bold; }
+            @media print { body { margin: 0 auto; padding: 10px; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>New Adil Electric Concern</h1>
+            <p>4-B, Jamiat Center, Shah Alam Market</p>
+            <p>Lahore, Pakistan</p>
+            <p>Phone: 0333-4263733 | Email: info@adilelectric.com</p>
+            <p>Website: e-roshni.com</p>
+          </div>
+
+          <div class="invoice-info">
+            <div><strong>Invoice #</strong>${(sale._id || '').toString().slice(-6)}</div>
+            <div><strong>Date:</strong> ${new Date(sale.createdAt || sale.date).toISOString().split('T')[0]} <strong>Time:</strong> ${new Date(sale.createdAt || sale.date).toTimeString().split(' ')[0]}</div>
+            <div><strong>Customer:</strong> ${sale.customerName || '-'} | <strong>Contact:</strong> ${sale.customerContact || '-'}</div>
+            <div><strong>Payment:</strong> ${sale.paymentMethod || '-'} | <strong>Status:</strong> ${sale.paymentStatus || '-'}${sale.paymentStatus === 'Credit' && sale.dueDate ? ` | <strong>Due:</strong> ${new Date(sale.dueDate).toISOString().split('T')[0]}` : ''}</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>S/N</th>
+                <th>Item</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Rate</th>
+                ${hasRefunds ? '<th class="text-right">Refund</th>' : ''}
+                <th class="text-right">Warranty</th>
+                ${itemsHaveDiscount ? '<th class="text-right">Disc.</th>' : ''}
+                <th class="text-right">SubTotal</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(sale.items || []).map((i, idx) => {
+                const warrantyString = warrantyForItem(i);
+                const key = String(i.productId || i.SKU || i._id || '');
+                const origQty = Number(i.quantity) || 0;
+                const refundedQty = Number(refundQtyMap.get(key) || 0);
+                const refundAmt = Number(refundAmtMap.get(key) || 0);
+                const remainingQty = Math.max(0, origQty - refundedQty);
+                const itemSubtotal = ((Number(i.perPiecePrice) || 0) * remainingQty) - (Number(i.discount) || 0);
+                return `
+                <tr>
+                  <td>${idx + 1}</td>
+                  <td>${i.productName || 'Item'}</td>
+                  <td class="text-right">${origQty}${refundedQty ? ` (-${refundedQty} ref)` : ''}</td>
+                  <td class="text-right">${Number(i.perPiecePrice || 0).toLocaleString()}</td>
+                  ${hasRefunds ? `<td class="text-right">${refundAmt ? 'Rs. ' + refundAmt.toLocaleString() : ''}</td>` : ''}
+                  <td class="text-right">${warrantyString}</td>
+                  ${itemsHaveDiscount ? `<td class="text-right">${i.discount || 0}</td>` : ''}
+                  <td class="text-right">${Number(itemSubtotal).toLocaleString()}</td>
+                </tr>
+              `;
+              }).join('')}
+              
+              
+              <tr class="total-row">
+                <td colspan="${5 + (hasRefunds ? 1 : 0) + (itemsHaveDiscount ? 1 : 0)}"></td>
+                <td class="text-right total-amount">Rs.${Number(totalWithoutDiscount).toLocaleString()}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="payment-info">
+            ${paymentInfoHtml}
+          </div>
+
+          <div class="footer">Thank you for your business!</div>
+        </body>
+      </html>
+    `;
+}
+
+// Helper: generate refund invoice HTML (matching regular invoice design)
+function generateRefundInvoiceHTML(sale, refundRecord) {
+  if (!sale || !refundRecord || !refundRecord.items) {
+    return `<html><body><h1>Refund Invoice</h1><p>Invalid refund data</p></body></html>`;
+  }
+
+  const totalRefundAmount = Number(refundRecord.totalRefundAmount) || 0;
+  const originalTotal = (sale.items || []).reduce((total, item) => {
+    return total + (item.perPiecePrice * item.quantity - (item.discount || 0));
+  }, 0);
+
+  return `
+      <html>
+        <head>
+          <title>Refund Invoice #${sale._id?.toString?.()?.slice(-6) || ''}</title>
+          <style>
+            html, body { width: 100%; margin: 0; padding: 0; }
+            body { font-family: 'Courier New', monospace; margin: 0 auto; padding: 15px; width: 80mm; color: #333; }
+            html { display: flex; justify-content: center; }
+            .header { text-align: center; margin-bottom: 15px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            .header h1 { margin: 0 0 5px 0; font-size: 16px; font-weight: bold; }
+            .header p { margin: 2px 0; font-size: 11px; }
+            .invoice-info { margin: 12px 0; font-size: 11px; }
+            .invoice-info div { margin: 3px 0; }
+            .invoice-info strong { font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+            th { background: #f5f5f5; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 6px 4px; text-align: left; font-weight: bold; font-size: 10px; }
+            td { padding: 5px 4px; border-bottom: 1px solid #eee; font-size: 10px; }
+            tr:last-child td { border-bottom: 1px solid #000; }
+            .text-right { text-align: right !important; }
+            .total-row { border-top: 2px solid #000; border-bottom: 2px solid #000; font-weight: bold; background: #f9f9f9; }
+            .total-amount { font-weight: bold; font-size: 11px; }
+            .footer { text-align: center; margin-top: 15px; font-size: 11px; font-weight: bold; }
+            @media print { body { margin: 0 auto; padding: 10px; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>New Adil Electric Concern</h1>
+            <p>4-B, Jamiat Center, Shah Alam Market</p>
+            <p>Lahore, Pakistan</p>
+            <p>Phone: 0333-4263733 | Email: info@adilelectric.com</p>
+            <p>Website: e-roshni.com</p>
+          </div>
+
+          <div class="invoice-info">
+            <div><strong>Refund Invoice #</strong>${sale._id?.toString?.()?.slice(-6) || ''}</div>
+            <div><strong>Date:</strong> ${new Date(sale.createdAt || Date.now()).toISOString().split('T')[0]} <strong>Time:</strong> ${new Date(sale.createdAt || Date.now()).toTimeString().split(' ')[0]}</div>
+            <div><strong>Seller:</strong> ${sale.sellerName || sale.sellerId || '-'}</div>
+            <div><strong>Customer:</strong> ${sale.customerName || '-'} | <strong>Contact:</strong> ${sale.customerContact || '-'}</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>S/N</th>
+                <th>Item</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Rate</th>
+                <th class="text-right">Amount</th>
+                <th class="text-right">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${refundRecord.items.map((item, idx) => {
+                const itemPrice = Number(item.perPiecePrice || 0);
+                const itemTotal = itemPrice * (Number(item.quantity || 0));
+                return `
+                <tr>
+                  <td>${idx + 1}</td>
+                  <td>${item.productName || '-'}</td>
+                  <td class="text-right">${item.quantity || 0}</td>
+                  <td class="text-right">${Number(itemPrice || 0).toLocaleString()}</td>
+                  <td class="text-right">${Number(itemTotal).toLocaleString()}</td>
+                  <td class="text-right" style="font-size: 9px;">${refundRecord.reason || '-'}</td>
+                </tr>
+              `;
+              }).join('')}
+              
+              <tr class="total-row">
+                <td colspan="5">Original Total</td>
+                <td class="text-right total-amount">Rs.${Number(originalTotal).toLocaleString()}</td>
+                <td></td>
+              </tr>
+              <tr class="total-row">
+                <td colspan="5">Total Refund</td>
+                <td class="text-right total-amount" style="color: #d32f2f;">Rs.${Number(totalRefundAmount).toLocaleString()}</td>
+                <td></td>
+              </tr>
+              <tr class="total-row">
+                <td colspan="5">Final Total</td>
+                <td class="text-right total-amount">Rs.${Number(originalTotal - totalRefundAmount).toLocaleString()}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="footer">Thank you for your business!</div>
+        </body>
+      </html>
+    `;
+}
+
 // Create a new sale (POST /sales)
 exports.createSale = async (req, res) => {
   try {
-    const { items, sellerId, sellerName, cashierName, customerName, customerContact, customerEmail, paidAmount, paymentMethod, paymentStatus: paymentStatusInput, paymentProofUrl, cashAmount, changeAmount, dueDate } = req.body;
+    const { items, sellerId, sellerName, cashierName, customerName, customerContact, customerEmail, paidAmount, paymentMethod, paymentStatus: paymentStatusInput, paymentProofUrl, cashAmount, changeAmount, dueDate, discountAmount } = req.body;
     if (!items?.length || !sellerId) return res.status(400).json({ message: 'Missing sale items or seller' });
 
     let totalQuantity = 0;
@@ -68,7 +356,7 @@ exports.createSale = async (req, res) => {
         subtotal: lineGross - discount, // keep for reference
       };
     });
-    const netAmount = Math.max(0, totalAmount - discountTotal);
+    const netAmount = Math.max(0, totalAmount - discountTotal - (Number(discountAmount) || 0));
     // Determine payment status
     let computedStatus = paidAmount >= netAmount ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
     // If client provided a valid mapped status, normalize and use it
@@ -142,6 +430,7 @@ exports.createSale = async (req, res) => {
       totalQuantity,
       totalAmount,
       discountTotal,
+      discountAmount: Number(discountAmount) || 0,
       netAmount,
       paymentStatus,
       paymentMethod: paymentMethod || 'Cash',
@@ -161,148 +450,27 @@ exports.createSale = async (req, res) => {
     if (sale.customerEmail) {
       const subject = `Invoice #${sale.invoiceNumber || String(sale._id).slice(-8)} - New Adil Electric Concern`;
       
-      // Build professional invoice HTML
-      const invoiceNum = sale.invoiceNumber || String(sale._id).substr(-6);
-      const itemsHaveDiscount = (sale.items || []).some(it => Number(it.discount || 0) > 0);
-      const preTotalColSpan = itemsHaveDiscount ? 4 : 3; // cols before last two (label + value)
-      let html = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
-          <div style="text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 15px;">
-            <h2 style="margin: 0; color: #333;">New Adil Electric Concern</h2>
-            <p style="margin: 5px 0; color: #666; font-size: 14px;">4-B, Jamiat Center, Shah Alam Market</p>
-            <p style="margin: 5px 0; color: #666; font-size: 14px;">Lahore, Pakistan</p>
-            <p style="margin: 5px 0; color: #666; font-size: 14px;">Phone: 0333-4263733 | Email: info@adilelectric.com</p>
-            <p style="margin: 5px 0; color: #666; font-size: 14px;">Website: e-roshni.com</p>
-          </div>
-          
-          <div style="margin-bottom: 20px;">
-            <p style="margin: 5px 0;"><strong>Invoice #${invoiceNum}</strong></p>
-            <p style="margin: 5px 0;">Date: ${new Date(sale.createdAt).toLocaleString()}</p>
-            <p style="margin: 5px 0;">Cashier: ${sale.cashierName || '-'}</p>
-          </div>
-          
-          <div style="margin-bottom: 20px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 3px;">
-            <p style="margin: 5px 0;"><strong>Customer Information</strong></p>
-            <p style="margin: 5px 0;">Name: ${sale.customerName || '-'}</p>
-            <p style="margin: 5px 0;">Contact: ${sale.customerContact || '-'}</p>
-            <p style="margin: 5px 0;">Email: ${sale.customerEmail || '-'}</p>
-          </div>
-          
-          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-            <thead>
-              <tr style="background: #f0f0f0; border-bottom: 2px solid #333;">
-                <th style="padding: 10px; text-align: left; font-weight: bold;">S/N</th>
-                <th style="padding: 10px; text-align: left; font-weight: bold;">Item</th>
-                <th style="padding: 10px; text-align: right; font-weight: bold;">Qty</th>
-                <th style="padding: 10px; text-align: right; font-weight: bold;">Rate (Rs)</th>
-                ${itemsHaveDiscount ? '<th style="padding: 10px; text-align: right; font-weight: bold;">Discount (Rs)</th>' : ''}
-                <th style="padding: 10px; text-align: right; font-weight: bold;">SubTotal (Rs)</th>
-              </tr>
-            </thead>
-            <tbody>
-      `;
-      
-      let totalAmount = 0;
-      (sale.items || []).forEach((it, idx) => {
-        const itemTotal = (Number(it.perPiecePrice) * Number(it.quantity)) - (Number(it.discount) || 0);
-        totalAmount += itemTotal;
-        html += `
-              <tr style="border-bottom: 1px solid #ddd;">
-                <td style="padding: 10px; text-align: left;">${idx + 1}</td>
-                <td style="padding: 10px; text-align: left; word-break: break-word;">${it.productName || ''}</td>
-                <td style="padding: 10px; text-align: right;">${it.quantity}</td>
-                <td style="padding: 10px; text-align: right;">Rs. ${it.perPiecePrice}</td>
-                ${itemsHaveDiscount ? `<td style="padding: 10px; text-align: right;">Rs. ${it.discount || 0}</td>` : ''}
-                <td style="padding: 10px; text-align: right;">Rs. ${itemTotal}</td>
-              </tr>
-        `;
-      });
-      
-      html += `
-            </tbody>
-          </table>
-          
-          <div style="margin-bottom: 20px; padding: 15px; background: #f0f0f0; border-radius: 3px;">
-            <table style="width: 100%;">
-              <tr>
-                <td style="padding: 5px; text-align: right;"><strong>Net Total:</strong></td>
-                <td style="padding: 5px; text-align: right; font-weight: bold;">Rs. ${sale.netAmount}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Payment Method:</td>
-                <td style="padding: 5px; text-align: right;">${sale.paymentMethod || '-'}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Payment Status:</td>
-                <td style="padding: 5px; text-align: right;">${sale.paymentStatus || '-'}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;"><strong>Paid Amount:</strong></td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.paymentMethod === 'Cash' ? (sale.cashAmount || 0) : (sale.paidAmount || 0)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;"><strong>Change Amount:</strong></td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-              </tr>
-      `;
-      
-      if (sale.paymentMethod === 'Cash') {
-        html += `
-              <tr>
-                <td style="padding: 5px; text-align: right;">Cash Received:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.cashAmount || 0}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Change:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-              </tr>
-        `;
-      } else if (sale.paymentStatus === 'Partial Paid') {
-        const remaining = Math.max(0, Number(sale.netAmount) - (Number(sale.paidAmount) || 0));
-        html += `
-              <tr>
-                <td style="padding: 5px; text-align: right;">Amount Received:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Remaining:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${remaining}</td>
-              </tr>
-        `;
-      } else if (sale.paymentStatus === 'Credit') {
-        html += `
-              <tr>
-                <td style="padding: 5px; text-align: right;">Amount Received:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Due Date:</td>
-                <td style="padding: 5px; text-align: right;">${sale.dueDate ? new Date(sale.dueDate).toLocaleDateString() : '-'}</td>
-              </tr>
-        `;
-      } else {
-        html += `
-              <tr>
-                <td style="padding: 5px; text-align: right;">Amount Paid:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;">Change:</td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-              </tr>
-        `;
+      // Fetch products for warranty info
+      let products = [];
+      try {
+        const productIds = sale.items.map(i => i.productId).filter(id => id);
+        if (productIds.length > 0) {
+          products = await Product.find({ _id: { $in: productIds } }).lean();
+        }
+      } catch (err) {
+        console.error('Error fetching products for warranty:', err);
+        // Continue without products - warranties will show as 'No warranty'
       }
       
-      html += `
-            </table>
-          </div>
-          
-          <div style="text-align: center; padding: 15px; color: #666; font-size: 14px; border-top: 1px solid #ddd;">
-            <p style="margin: 0;">Thank you for your business!</p>
-            <p style="margin: 5px 0; font-size: 12px; color: #999;">This is an automated invoice. Please retain this email for your records.</p>
-          </div>
-        </div>
-      `;
+      // Generate invoice HTML
+      let html;
+      try {
+        html = generateInvoiceHTML(sale, products);
+      } catch (err) {
+        console.error('Error generating invoice HTML:', err);
+        // Continue with basic HTML or skip email
+        html = `<html><body><h1>Invoice</h1><p>Error generating invoice. Please contact support.</p></body></html>`;
+      }
 
       // Send to customer
       // Send email in background (non-blocking) so API response returns immediately
@@ -320,6 +488,7 @@ exports.createSale = async (req, res) => {
           // Send to admin email
           const adminEmail = 'adilelectric17@gmail.com';
           const paidVal = sale.paymentMethod === 'Cash' ? (sale.cashAmount || 0) : (sale.paidAmount || 0);
+          const invoiceNum = sale.invoiceNumber || String(sale._id).slice(-6);
           const adminSubject = `[ADMIN] Invoice #${invoiceNum} - ${sale.customerName || 'Unknown Customer'} - Net Rs. ${sale.netAmount} - Paid Rs. ${paidVal} - Change Rs. ${sale.changeAmount || 0}`;
           await sendInvoiceEmail(adminEmail, adminSubject, html).catch(()=>{});
         } catch (e) {
@@ -333,6 +502,7 @@ exports.createSale = async (req, res) => {
 
     // Return response immediately - email status updates will happen in background
     const updatedSale = await Sale.findById(sale._id).lean();
+
     return res.status(201).json(updatedSale);
   } catch (e) {
     res.status(500).json({ message: 'Failed to create sale', error: e.message });
@@ -373,7 +543,7 @@ exports.updateSale = async (req, res) => {
     const {
       cashierName, customerName, customerContact, customerEmail,
       paymentStatus, paymentMethod, paidAmount, cashAmount, changeAmount, dueDate,
-      items, netAmount, totalAmount, discountTotal, totalQuantity, paymentProofUrl, edited
+      items, netAmount, totalAmount, discountTotal, discountAmount, totalQuantity, paymentProofUrl, edited
     } = req.body;
     const sale = await Sale.findById(req.params.id);
     if (!sale) return res.status(404).json({ message: 'Sale not found' });
@@ -468,6 +638,7 @@ exports.updateSale = async (req, res) => {
     if (netAmount !== undefined) sale.netAmount = Number(netAmount) || 0;
     if (totalAmount !== undefined) sale.totalAmount = Number(totalAmount) || 0;
     if (discountTotal !== undefined) sale.discountTotal = Number(discountTotal) || 0;
+    if (discountAmount !== undefined) sale.discountAmount = Number(discountAmount) || 0;
     if (totalQuantity !== undefined) sale.totalQuantity = Number(totalQuantity) || 0;
 
     if (edited !== undefined) sale.edited = !!edited;
@@ -495,144 +666,27 @@ exports.resendEmail = async (req, res) => {
     // Build professional invoice HTML (same as createSale)
     const subject = `Invoice #${sale.invoiceNumber || String(sale._id).slice(-8)} - New Adil Electric Concern`;
     const invoiceNum = sale.invoiceNumber || String(sale._id).substr(-6);
-    const itemsHaveDiscount = (sale.items || []).some(it => Number(it.discount || 0) > 0);
-    const preTotalColSpan = itemsHaveDiscount ? 4 : 3;
-    let html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
-        <div style="text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 15px;">
-          <h2 style="margin: 0; color: #333;">New Adil Electric Concern</h2>
-          <p style="margin: 5px 0; color: #666; font-size: 14px;">4-B, Jamiat Center, Shah Alam Market</p>
-          <p style="margin: 5px 0; color: #666; font-size: 14px;">Lahore, Pakistan</p>
-          <p style="margin: 5px 0; color: #666; font-size: 14px;">Phone: 0333-4263733 | Email: info@adilelectric.com</p>
-          <p style="margin: 5px 0; color: #666; font-size: 14px;">Website: e-roshni.com</p>
-        </div>
-        
-        <div style="margin-bottom: 20px;">
-          <p style="margin: 5px 0;"><strong>Invoice #${invoiceNum}</strong></p>
-          <p style="margin: 5px 0;">Date: ${new Date(sale.createdAt).toLocaleString()}</p>
-          <p style="margin: 5px 0;">Cashier: ${sale.cashierName || '-'}</p>
-        </div>
-        
-        <div style="margin-bottom: 20px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 3px;">
-          <p style="margin: 5px 0;"><strong>Customer Information</strong></p>
-          <p style="margin: 5px 0;">Name: ${sale.customerName || '-'}</p>
-          <p style="margin: 5px 0;">Contact: ${sale.customerContact || '-'}</p>
-          <p style="margin: 5px 0;">Email: ${sale.customerEmail || '-'}</p>
-        </div>
-        
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-          <thead>
-            <tr style="background: #f0f0f0; border-bottom: 2px solid #333;">
-              <th style="padding: 10px; text-align: left; font-weight: bold;">S/N</th>
-              <th style="padding: 10px; text-align: left; font-weight: bold;">Item</th>
-              <th style="padding: 10px; text-align: right; font-weight: bold;">Qty</th>
-              <th style="padding: 10px; text-align: right; font-weight: bold;">Rate (Rs)</th>
-              ${itemsHaveDiscount ? '<th style="padding: 10px; text-align: right; font-weight: bold;">Discount (Rs)</th>' : ''}
-              <th style="padding: 10px; text-align: right; font-weight: bold;">SubTotal (Rs)</th>
-            </tr>
-          </thead>
-          <tbody>
-    `;
     
-    let totalAmount = 0;
-    (sale.items || []).forEach((it, idx) => {
-      const itemTotal = (Number(it.perPiecePrice) * Number(it.quantity)) - (Number(it.discount) || 0);
-      totalAmount += itemTotal;
-      html += `
-            <tr style="border-bottom: 1px solid #ddd;">
-              <td style="padding: 10px; text-align: left;">${idx + 1}</td>
-              <td style="padding: 10px; text-align: left; word-break: break-word;">${it.productName || ''}</td>
-              <td style="padding: 10px; text-align: right;">${it.quantity}</td>
-              <td style="padding: 10px; text-align: right;">Rs. ${it.perPiecePrice}</td>
-              ${itemsHaveDiscount ? `<td style="padding: 10px; text-align: right;">Rs. ${it.discount || 0}</td>` : ''}
-              <td style="padding: 10px; text-align: right;">Rs. ${itemTotal}</td>
-            </tr>
-      `;
-    });
-    
-    html += `
-          </tbody>
-        </table>
-        
-        <div style="margin-bottom: 20px; padding: 15px; background: #f0f0f0; border-radius: 3px;">
-          <table style="width: 100%;">
-            <tr>
-              <td style="padding: 5px; text-align: right;"><strong>Net Total:</strong></td>
-              <td style="padding: 5px; text-align: right; font-weight: bold;">Rs. ${sale.netAmount}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Payment Method:</td>
-              <td style="padding: 5px; text-align: right;">${sale.paymentMethod || '-'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Payment Status:</td>
-              <td style="padding: 5px; text-align: right;">${sale.paymentStatus || '-'}</td>
-            </tr>              <tr>
-                <td style="padding: 5px; text-align: right;"><strong>Paid Amount:</strong></td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.paymentMethod === 'Cash' ? (sale.cashAmount || 0) : (sale.paidAmount || 0)}</td>
-              </tr>
-              <tr>
-                <td style="padding: 5px; text-align: right;"><strong>Change Amount:</strong></td>
-                <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-              </tr>    `;
-    
-    if (sale.paymentMethod === 'Cash') {
-      html += `
-            <tr>
-              <td style="padding: 5px; text-align: right;">Cash Received:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.cashAmount || 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Change:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-            </tr>
-      `;
-    } else if (sale.paymentStatus === 'Partial Paid') {
-      const remaining = Math.max(0, Number(sale.netAmount) - (Number(sale.paidAmount) || 0));
-      html += `
-            <tr>
-              <td style="padding: 5px; text-align: right;">Amount Received:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Remaining:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${remaining}</td>
-            </tr>
-      `;
-    } else if (sale.paymentStatus === 'Credit') {
-      html += `
-            <tr>
-              <td style="padding: 5px; text-align: right;">Amount Received:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Due Date:</td>
-              <td style="padding: 5px; text-align: right;">${sale.dueDate ? new Date(sale.dueDate).toLocaleDateString() : '-'}</td>
-            </tr>
-      `;
-    } else {
-      html += `
-            <tr>
-              <td style="padding: 5px; text-align: right;">Amount Paid:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.paidAmount || 0}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px; text-align: right;">Change:</td>
-              <td style="padding: 5px; text-align: right;">Rs. ${sale.changeAmount || 0}</td>
-            </tr>
-      `;
+    // Fetch products for warranty info
+    let products = [];
+    try {
+      const productIds = sale.items.map(i => i.productId).filter(id => id);
+      if (productIds.length > 0) {
+        products = await Product.find({ _id: { $in: productIds } }).lean();
+      }
+    } catch (err) {
+      console.error('Error fetching products for warranty:', err);
+      // Continue without products - warranties will show as 'No warranty'
     }
     
-    html += `
-          </table>
-        </div>
-        
-        <div style="text-align: center; padding: 15px; color: #666; font-size: 14px; border-top: 1px solid #ddd;">
-          <p style="margin: 0;">Thank you for your business!</p>
-          <p style="margin: 5px 0; font-size: 12px; color: #999;">This is an automated invoice. Please retain this email for your records.</p>
-        </div>
-      </div>
-    `;
+    // Generate invoice HTML
+    let html;
+    try {
+      html = generateInvoiceHTML(sale, products);
+    } catch (err) {
+      console.error('Error generating invoice HTML:', err);
+      return res.status(500).json({ success: false, error: 'Failed to generate invoice HTML' });
+    }
 
     // attempt send to customer
     const mailRes = await sendInvoiceEmail(sale.customerEmail, subject, html);
@@ -644,6 +698,7 @@ exports.resendEmail = async (req, res) => {
       const adminEmail = 'adilelectric17@gmail.com';
       const paidVal = sale.paymentMethod === 'Cash' ? (sale.cashAmount || 0) : (sale.paidAmount || 0);
       const adminSubject = `[ADMIN] Invoice #${invoiceNum} - ${sale.customerName || 'Unknown Customer'} - Net Rs. ${sale.netAmount} - Paid Rs. ${paidVal} - Change Rs. ${sale.changeAmount || 0}`;
+      await sendInvoiceEmail(adminEmail, adminSubject, html).catch(()=>{});
       
       const updated = await Sale.findById(saleId).lean();
       return res.json({ success: true, sale: updated });
@@ -751,7 +806,8 @@ exports.refundSale = async (req, res) => {
       refundedBy: user?._id || undefined,
       refundedByName: user?.username || user?.name || (req.user && req.user.email) || 'system',
       refundedByRole: user?.role || 'seller',
-      reason: reason || ''
+      reason: reason || '',
+      createdAt: new Date()
     };
     sale.refunds = sale.refunds || [];
     sale.refunds.push(refundRecord);
@@ -763,26 +819,11 @@ exports.refundSale = async (req, res) => {
     await sale.save();
 
     const updated = await Sale.findById(saleId).lean();
-    // Send refund notification email to admin with basic refund invoice
+    // Send refund notification email to admin with refund invoice matching regular invoice design
     try {
       const adminEmail = process.env.ADMIN_EMAIL || 'adilelectric17@gmail.com';
       const subject = `Refund processed - Invoice #${String(sale._id).slice(-6)}`;
-      const itemsHtml = refundRecord.items.map(it => `<tr><td>${it.productName}</td><td style="text-align:right">${it.quantity}</td><td style="text-align:right">${(it.perPiecePrice||0).toFixed(2)}</td><td style="text-align:right">${((it.perPiecePrice||0)*it.quantity).toFixed(2)}</td></tr>`).join('');
-      const html = `
-        <div style="font-family: Arial, sans-serif; max-width:600px;">
-          <h2>Refund Invoice</h2>
-          <p><strong>Original Sale:</strong> ${sale._id?.toString?.() || ''}</p>
-          <p><strong>Seller:</strong> ${sale.sellerName || sale.sellerId || '-'}<br/> <strong>Customer:</strong> ${sale.customerName || '-'} (${sale.customerContact || '-'})</p>
-          <table style="width:100%; border-collapse:collapse;">
-            <thead><tr><th style="text-align:left">Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-            <tbody>${itemsHtml}</tbody>
-            <tfoot>
-              <tr><td colspan="2"></td><td style="text-align:right"><strong>Total Refund</strong></td><td style="text-align:right"><strong>Rs. ${totalRefundAmount.toFixed(2)}</strong></td></tr>
-            </tfoot>
-          </table>
-          <p>Reason: ${refundRecord.reason || '-'}</p>
-        </div>
-      `;
+      const html = generateRefundInvoiceHTML(sale, refundRecord);
       // send in background
       sendInvoiceEmail(adminEmail, subject, html).catch(()=>{});
     } catch (e) {
@@ -852,11 +893,8 @@ exports.claimWarranty = async (req, res) => {
         return res.status(400).json({ success: false, message: `Warranty expired for ${orig.productName || key}` });
       }
 
-      const already = Number(claimedSoFar.get(key) || 0);
-      const maxClaimable = Math.max(0, (Number(orig.quantity) || 0) - already);
-      if (reqQty > maxClaimable) {
-        return res.status(400).json({ success: false, message: `Warranty claim qty for ${orig.productName || key} exceeds remaining claimable amount (${maxClaimable})` });
-      }
+      // For warranty claims, allow multiple claims within warranty period
+      // Only check if warranty is still valid, don't limit by quantity already claimed
 
       claimItems.push({ productId: it.productId || null, productName: orig.productName, SKU: orig.SKU, quantity: reqQty });
       totalWarrantyQty += reqQty;
@@ -920,7 +958,8 @@ exports.claimWarranty = async (req, res) => {
       claimedBy: user?._id || undefined,
       claimedByName: user?.username || user?.name || (req.user && req.user.email) || 'system',
       claimedByRole: user?.role || 'seller',
-      reason: reason || ''
+      reason: reason || '',
+      createdAt: new Date()
     };
 
     sale.warrantyClaims = sale.warrantyClaims || [];
@@ -933,5 +972,80 @@ exports.claimWarranty = async (req, res) => {
   } catch (e) {
     console.error('Warranty claim error', e);
     return res.status(500).json({ success: false, message: e.message || 'Warranty claim failed' });
+  }
+};
+
+// Get recent refunds for notifications (GET /sales/refunds/recent)
+exports.getRecentRefunds = async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 10;
+    const sales = await Sale.find({ refunds: { $exists: true, $not: { $size: 0 } } })
+      .sort({ 'refunds.0.createdAt': -1 })
+      .limit(limit)
+      .lean();
+    
+    const refunds = [];
+    sales.forEach(sale => {
+      (sale.refunds || []).forEach((refund, idx) => {
+        refunds.push({
+          id: `${sale._id}-refund-${idx}`,
+          saleId: sale._id,
+          invoiceNumber: sale.invoiceNumber,
+          customerName: sale.customerName,
+          items: refund.items,
+          totalRefundQty: refund.totalRefundQty,
+          totalRefundAmount: refund.totalRefundAmount,
+          refundedBy: refund.refundedBy,
+          refundedByName: refund.refundedByName,
+          refundedByRole: refund.refundedByRole,
+          reason: refund.reason,
+          createdAt: refund.createdAt || sale.updatedAt,
+          ts: new Date(refund.createdAt || sale.updatedAt).getTime()
+        });
+      });
+    });
+    
+    refunds.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return res.json(refunds.slice(0, limit));
+  } catch (e) {
+    console.error('Error fetching recent refunds:', e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// Get recent warranty claims for notifications (GET /sales/warranty/recent)
+exports.getRecentWarrantyClaims = async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 10;
+    const sales = await Sale.find({ warrantyClaims: { $exists: true, $not: { $size: 0 } } })
+      .sort({ 'warrantyClaims.0.createdAt': -1 })
+      .limit(limit)
+      .lean();
+    
+    const claims = [];
+    sales.forEach(sale => {
+      (sale.warrantyClaims || []).forEach((claim, idx) => {
+        claims.push({
+          id: `${sale._id}-warranty-${idx}`,
+          saleId: sale._id,
+          invoiceNumber: sale.invoiceNumber,
+          customerName: sale.customerName,
+          items: claim.items,
+          totalWarrantyQty: claim.totalWarrantyQty,
+          claimedBy: claim.claimedBy,
+          claimedByName: claim.claimedByName,
+          claimedByRole: claim.claimedByRole,
+          reason: claim.reason,
+          createdAt: claim.createdAt || sale.updatedAt,
+          ts: new Date(claim.createdAt || sale.updatedAt).getTime()
+        });
+      });
+    });
+    
+    claims.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return res.json(claims.slice(0, limit));
+  } catch (e) {
+    console.error('Error fetching recent warranty claims:', e);
+    return res.status(500).json({ success: false, message: e.message });
   }
 };

@@ -4,6 +4,7 @@ import {
   Grid,
   Paper,
   Typography,
+  Fade,
   Chip,
   LinearProgress,
   Divider,
@@ -53,8 +54,8 @@ const AdminHome = () => {
       } catch (e) {
         setError(
           e.response?.data?.message ||
-            e.message ||
-            'Failed to load dashboard data. Please try again.'
+          e.message ||
+          'Failed to load dashboard data. Please try again.'
         );
       } finally {
         setLoading(false);
@@ -129,7 +130,15 @@ const AdminHome = () => {
   const lowStockProducts = useMemo(
     () =>
       products
-        .filter((p) => Number(p.quantity || p.stock || 0) <= 10)
+        .filter((p) => {
+          const cartonQuantity = Number(p.cartonQuantity) || 0;
+          const piecesPerCarton = Number(p.piecesPerCarton) || 0;
+          const losePieces = Number(p.losePieces) || 0;
+          const totalPieces = cartonQuantity * piecesPerCarton + losePieces;
+          const reorderLevel = Number(p.reorderLevel) || 0;
+          const isLow = reorderLevel > 0 ? totalPieces <= reorderLevel : (cartonQuantity + (losePieces > 0 ? 1 : 0)) <= 1;
+          return isLow;
+        })
         .slice(0, 5),
     [products]
   );
@@ -146,285 +155,293 @@ const AdminHome = () => {
   );
 
   return (
-    <Box sx={{ width: '100%', maxWidth: 1800, mx: 'auto', mt: 2, mb: 4, px: { xs: 1, md: 2 } }}>
-      {loading && (
-        <Box sx={{ mb: 2 }}>
-          <LinearProgress />
-        </Box>
-      )}
-      {error && (
-        <Paper
-          elevation={3}
-          sx={{ mb: 2, p: 2, borderLeft: '4px solid #d32f2f' }}
-        >
-          <Typography color="error" variant="body2">
-            {error}
-          </Typography>
-        </Paper>
-      )}
-
-      <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} md={8}>
-          <Typography
-            variant="h4"
-            sx={{ fontWeight: 700, mb: 0.5, color: darkMode ? '#fff' : '#333' }}
+    <Fade in timeout={500}>
+      <Box sx={{ width: '100%', maxWidth: 1800, mx: 'auto', mt: 2, mb: 4, px: { xs: 1, md: 2 } }}>
+        {loading && (
+          <Box sx={{ mb: 2 }}>
+            <LinearProgress />
+          </Box>
+        )}
+        {error && (
+          <Paper
+            elevation={3}
+            sx={{ mb: 2, p: 2, borderLeft: '4px solid #d32f2f' }}
           >
-            Admin Overview
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            High level snapshot of products, sellers, and sales performance.
-          </Typography>
-        </Grid>
-        <Grid
-          item
-          xs={12}
-          md={4}
-          sx={{ display: 'flex', justifyContent: { xs: 'flex-start', md: 'flex-end' }, alignItems: 'center', gap: 1, flexWrap: 'wrap' }}
-        >
-          <Chip
-            icon={<PeopleIcon />}
-            label={`Sellers: ${sellers.length}`}
-            color="primary"
-            variant="outlined"
-          />
-          <Chip
-            icon={<Inventory2Icon />}
-            label={`Products: ${products.length}`}
-            color="primary"
-            variant="outlined"
-          />
-          <Chip
-            icon={<TrendingUpIcon />}
-            label={`Orders: ${summary.totalOrders}`}
-            color="success"
-            variant="outlined"
-          />
-        </Grid>
-      </Grid>
+            <Typography color="error" variant="body2">
+              {error}
+            </Typography>
+          </Paper>
+        )}
 
-      {/* KPI cards */}
-      <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
-            <Typography variant="caption" color="text.secondary">
-              Total Revenue
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={12} md={8}>
+            <Typography
+              variant="h4"
+              sx={{ fontWeight: 700, mb: 0.5, color: darkMode ? '#fff' : '#333' }}
+            >
+              Admin Overview
             </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
-              Rs. {summary.totalRevenue.toLocaleString()}
+            <Typography variant="body2" color="text.secondary">
+              High level snapshot of products, sellers, and sales performance.
             </Typography>
-            <Typography variant="caption" color="success.main">
-              All time
-            </Typography>
-          </Paper>
+          </Grid>
+          <Grid
+            item
+            xs={12}
+            md={4}
+            sx={{ display: 'flex', justifyContent: { xs: 'flex-start', md: 'flex-end' }, alignItems: 'center', gap: 1, flexWrap: 'wrap' }}
+          >
+            <Chip
+              icon={<PeopleIcon />}
+              label={`Sellers: ${sellers.length}`}
+              color="primary"
+              variant="outlined"
+            />
+            <Chip
+              icon={<Inventory2Icon />}
+              label={`Products: ${products.length}`}
+              color="primary"
+              variant="outlined"
+            />
+            <Chip
+              icon={<TrendingUpIcon />}
+              label={`Orders: ${summary.totalOrders}`}
+              color="success"
+              variant="outlined"
+            />
+          </Grid>
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
-            <Typography variant="caption" color="text.secondary">
-              Today&apos;s Revenue
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
-              Rs. {summary.todayRevenue.toLocaleString()}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {todayKey}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
-            <Typography variant="caption" color="text.secondary">
-              This Month
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
-              Rs. {summary.monthRevenue.toLocaleString()}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {monthKey}
-            </Typography>
-          </Paper>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
-            <Typography variant="caption" color="text.secondary">
-              Total Refunds
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
-              Rs. {summary.totalRefund.toLocaleString()}
-            </Typography>
-            <Typography variant="caption" color="error.main">
-              Money returned to customers
-            </Typography>
-          </Paper>
-        </Grid>
-      </Grid>
 
-      <Grid container spacing={2}>
-        {/* Revenue trend */}
-        <Grid item xs={12} md={8}>
-          <Paper elevation={3} sx={{ p: 2.5, borderRadius: 3, height: '100%' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-              <Typography
-                variant="subtitle1"
-                sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
-              >
-                Last 7 Days Revenue
+        {/* KPI cards */}
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
+              <Typography variant="caption" color="text.secondary">
+                Total Revenue
               </Typography>
-              <Chip
-                size="small"
-                icon={<TrendingUpIcon fontSize="small" />}
-                label="Overview"
-                variant="outlined"
-              />
-            </Box>
-            <Divider sx={{ mb: 1.5 }} />
-            {summary.last7Days.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                No sales data yet.
+              <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
+                Rs. {summary.totalRevenue.toLocaleString()}
               </Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {summary.last7Days.map((d) => {
-                  const pct =
-                    summary.monthRevenue > 0
-                      ? Math.min(
+              <Typography variant="caption" color="success.main">
+                All time
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
+              <Typography variant="caption" color="text.secondary">
+                Today&apos;s Revenue
+              </Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
+                Rs. {summary.todayRevenue.toLocaleString()}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {todayKey}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
+              <Typography variant="caption" color="text.secondary">
+                This Month
+              </Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
+                Rs. {summary.monthRevenue.toLocaleString()}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {monthKey}
+              </Typography>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Paper elevation={3} sx={{ p: 2, borderRadius: 3 }}>
+              <Typography variant="caption" color="text.secondary">
+                Total Refunds
+              </Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.5 }}>
+                Rs. {summary.totalRefund.toLocaleString()}
+              </Typography>
+              <Typography variant="caption" color="error.main">
+                Money returned to customers
+              </Typography>
+            </Paper>
+          </Grid>
+        </Grid>
+
+        <Grid container spacing={2}>
+          {/* Revenue trend */}
+          <Grid item xs={12} md={8}>
+            <Paper elevation={3} sx={{ p: 2.5, borderRadius: 3, height: '100%' }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
+                >
+                  Last 7 Days Revenue
+                </Typography>
+                <Chip
+                  size="small"
+                  icon={<TrendingUpIcon fontSize="small" />}
+                  label="Overview"
+                  variant="outlined"
+                />
+              </Box>
+              <Divider sx={{ mb: 1.5 }} />
+              {summary.last7Days.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No sales data yet.
+                </Typography>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {summary.last7Days.map((d) => {
+                    const pct =
+                      summary.monthRevenue > 0
+                        ? Math.min(
                           100,
                           Math.round((d.value / summary.monthRevenue) * 100)
                         )
-                      : d.value > 0
-                      ? 60
-                      : 0;
-                  return (
-                    <Box key={d.date}>
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          mb: 0.3,
-                        }}
-                      >
-                        <Typography variant="caption">{d.date}</Typography>
-                        <Typography variant="caption">
-                          Rs. {d.value.toLocaleString()}
-                        </Typography>
+                        : d.value > 0
+                          ? 60
+                          : 0;
+                    return (
+                      <Box key={d.date}>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            mb: 0.3,
+                          }}
+                        >
+                          <Typography variant="caption">{d.date}</Typography>
+                          <Typography variant="caption">
+                            Rs. {d.value.toLocaleString()}
+                          </Typography>
+                        </Box>
+                        <LinearProgress
+                          variant="determinate"
+                          value={pct}
+                          sx={{ height: 6, borderRadius: 3 }}
+                        />
                       </Box>
-                      <LinearProgress
-                        variant="determinate"
-                        value={pct}
-                        sx={{ height: 6, borderRadius: 3 }}
-                      />
-                    </Box>
-                  );
-                })}
+                    );
+                  })}
+                </Box>
+              )}
+            </Paper>
+          </Grid>
+
+          {/* Right column: latest & low stock */}
+          <Grid item xs={12} md={4}>
+            <Paper
+              elevation={3}
+              sx={{ p: 2.5, borderRadius: 3, mb: 2, maxHeight: 260, overflow: 'hidden' }}
+            >
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  mb: 1,
+                }}
+              >
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
+                >
+                  Latest Orders
+                </Typography>
+                <Chip
+                  size="small"
+                  icon={<ReceiptLongIcon fontSize="small" />}
+                  label={latestSales.length}
+                />
               </Box>
-            )}
-          </Paper>
-        </Grid>
+              <Divider sx={{ mb: 1 }} />
+              {latestSales.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No recent orders.
+                </Typography>
+              ) : (
+                <List dense sx={{ maxHeight: 190, overflowY: 'auto' }}>
+                  {latestSales.map((s) => (
+                    <ListItem key={s._id} disablePadding sx={{ mb: 0.5 }}>
+                      <ListItemText
+                        primary={
+                          <Typography variant="body2">
+                            #{s.invoiceNumber || (s._id || '').toString().slice(-6)} ·{' '}
+                            {s.customerName || 'Walk-in'}
+                          </Typography>
+                        }
+                        secondary={
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(s.createdAt || s.date).toLocaleString()} · Rs.{' '}
+                            {(s.netAmount || s.totalAmount || 0).toLocaleString()}
+                          </Typography>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </Paper>
 
-        {/* Right column: latest & low stock */}
-        <Grid item xs={12} md={4}>
-          <Paper
-            elevation={3}
-            sx={{ p: 2.5, borderRadius: 3, mb: 2, maxHeight: 260, overflow: 'hidden' }}
-          >
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                mb: 1,
-              }}
-            >
-              <Typography
-                variant="subtitle1"
-                sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
+            <Paper elevation={3} sx={{ p: 2.5, borderRadius: 3 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  mb: 1,
+                }}
               >
-                Latest Orders
-              </Typography>
-              <Chip
-                size="small"
-                icon={<ReceiptLongIcon fontSize="small" />}
-                label={latestSales.length}
-              />
-            </Box>
-            <Divider sx={{ mb: 1 }} />
-            {latestSales.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                No recent orders.
-              </Typography>
-            ) : (
-              <List dense sx={{ maxHeight: 190, overflowY: 'auto' }}>
-                {latestSales.map((s) => (
-                  <ListItem key={s._id} disablePadding sx={{ mb: 0.5 }}>
-                    <ListItemText
-                      primary={
-                        <Typography variant="body2">
-                          #{s.invoiceNumber || (s._id || '').toString().slice(-6)} ·{' '}
-                          {s.customerName || 'Walk-in'}
-                        </Typography>
-                      }
-                      secondary={
-                        <Typography variant="caption" color="text.secondary">
-                          {new Date(s.createdAt || s.date).toLocaleString()} · Rs.{' '}
-                          {(s.netAmount || s.totalAmount || 0).toLocaleString()}
-                        </Typography>
-                      }
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Paper>
-
-          <Paper elevation={3} sx={{ p: 2.5, borderRadius: 3 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                mb: 1,
-              }}
-            >
-              <Typography
-                variant="subtitle1"
-                sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
-              >
-                Low Stock Alerts
-              </Typography>
-              <Chip
-                size="small"
-                icon={<ReplayIcon fontSize="small" />}
-                label={lowStockProducts.length}
-                color={lowStockProducts.length ? 'warning' : 'default'}
-              />
-            </Box>
-            <Divider sx={{ mb: 1 }} />
-            {lowStockProducts.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                All products are sufficiently stocked.
-              </Typography>
-            ) : (
-              <List dense>
-                {lowStockProducts.map((p) => (
-                  <ListItem key={p._id || p.id} disablePadding sx={{ mb: 0.5 }}>
-                    <ListItemText
-                      primary={
-                        <Typography variant="body2">{p.name || p.productName}</Typography>
-                      }
-                      secondary={
-                        <Typography variant="caption" color="text.secondary">
-                          Stock: {p.quantity || p.stock || 0}{' '}
-                          {p.unit ? `(${p.unit})` : ''}
-                        </Typography>
-                      }
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Paper>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}
+                >
+                  Low Stock Alerts
+                </Typography>
+                <Chip
+                  size="small"
+                  icon={<ReplayIcon fontSize="small" />}
+                  label={lowStockProducts.length}
+                  color={lowStockProducts.length ? 'warning' : 'default'}
+                />
+              </Box>
+              <Divider sx={{ mb: 1 }} />
+              {lowStockProducts.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  All products are sufficiently stocked.
+                </Typography>
+              ) : (
+                <List dense>
+                  {lowStockProducts.map((p) => {
+                    const cartonQuantity = Number(p.cartonQuantity) || 0;
+                    const piecesPerCarton = Number(p.piecesPerCarton) || 0;
+                    const losePieces = Number(p.losePieces) || 0;
+                    const totalPieces = cartonQuantity * piecesPerCarton + losePieces;
+                    const reorderLevel = Number(p.reorderLevel) || 0;
+                    return (
+                      <ListItem key={p._id || p.id} disablePadding sx={{ mb: 0.5 }}>
+                        <ListItemText
+                          primary={
+                            <Typography variant="body2">{p.name || p.productName}</Typography>
+                          }
+                          secondary={
+                            <Typography variant="caption" color="text.secondary">
+                              Stock: {totalPieces} pcs {reorderLevel > 0 ? `(Reorder: ${reorderLevel})` : ''}
+                            </Typography>
+                          }
+                        />
+                      </ListItem>
+                    );
+                  })}
+                </List>
+              )}
+            </Paper>
+          </Grid>
         </Grid>
-      </Grid>
-    </Box>
+      </Box>
+    </Fade>
   );
 };
 

@@ -9,12 +9,15 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Fade,
   Button,
   TextField,
   Grid,
   CircularProgress,
   Alert,
   Chip,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import { useDarkMode } from '../context/DarkModeContext';
 import API from '../api/api';
@@ -25,6 +28,8 @@ import { useNavigate } from 'react-router-dom';
 
 const AdminSellerClients = () => {
   const { darkMode } = useDarkMode();
+  const theme = useTheme();
+  const isSm = useMediaQuery(theme.breakpoints.down('sm'));
   const [sellers, setSellers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -131,17 +136,17 @@ const AdminSellerClients = () => {
         const salesRes = await API.get(`/sales?sellerId=${seller._id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        
+
         const allSales = Array.isArray(salesRes.data) ? salesRes.data : [];
         console.log(`Fetched ${allSales.length} sales records for seller ${seller.username}`);
-        
+
         // Extract unique customers from sales data
         const customersMap = {};
         allSales.forEach(sale => {
           const customerName = sale.customerName || sale.customer?.name || 'Unknown';
           const customerEmail = sale.customerEmail || sale.customer?.email || sale.customerEmailAddress || sale.customer_email || '';
           const customerContact = sale.customerContact || sale.customer?.phone || sale.customerPhone || '';
-          
+
           if (!customersMap[customerName]) {
             customersMap[customerName] = {
               name: customerName,
@@ -156,7 +161,7 @@ const AdminSellerClients = () => {
             date: sale.date || sale.createdAt || new Date(),
           });
         });
-        
+
         const customers = Object.values(customersMap);
         console.log(`Extracted ${customers.length} unique customers for seller ${seller.username}`);
 
@@ -241,7 +246,7 @@ const AdminSellerClients = () => {
         const errorMsg = `Error fetching data for seller ${seller.username}: ${e.message}`;
         console.error(errorMsg, e);
         errorLog.push(errorMsg);
-        
+
         // Still generate seller section with available data
         sellersDataHTML += `
           <div style="page-break-inside: avoid; margin-bottom: 15px; border: 2px solid #ff6b6b; padding: 12px; border-radius: 4px; background: #ffe0e0;">
@@ -768,521 +773,975 @@ const AdminSellerClients = () => {
     setEndDate('');
   };
 
+  // Define cellSx like SellerSalesReport.js for consistent styling
+  const cellSx = {
+    maxWidth: { xs: 80, sm: 120, md: 160, lg: 240 },
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+    padding: { xs: '6px 8px', sm: '12px 16px' }
+  };
+
   return (
-    <Box
-      sx={{
-        mt: 2,
-        width: '100%',
-        backgroundColor: darkMode ? '#121212' : '#fafafa',
-        minHeight: '100vh',
-        p: 2,
-      }}
-    >
-      <Typography variant="h4" align="center" sx={{ mb: 3, fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>
-        Seller Clients Management
-      </Typography>
-
-      {/* Filters Paper */}
-      <Paper
-        elevation={3}
+    <Fade in timeout={500}>
+      <Box
         sx={{
-          p: 3,
-          mb: 3,
-          backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-          borderRadius: 2,
-          border: darkMode ? '1px solid #333' : 'none',
-        }}
-      >
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="Search (Name, Shop, Email)"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Type to search..."
-              variant="outlined"
-              size="small"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                  '&:hover fieldset': { borderColor: '#1976d2' },
-                },
-              }}
-            />
-          </Grid>
+          maxWidth: { xs: '100%', lg: 1800 },
+          minWidth: 0,
+          boxSizing: 'border-box',
+          overflowX: 'hidden',
+          px: { xs: 1, sm: 1, md: 2 },
+          mt: { xs: 1, sm: 2, md: 3 },
+          pb: 1,
+          background: `linear-gradient(135deg, ${darkMode ? '#1a1a2e' : '#f8f9fa'} 0%, ${darkMode ? '#16213e' : '#e9ecef'} 100%)`,
+          minHeight: '100vh',
+          mx: 'auto',
+          position: 'relative',
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '4px',
+            background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 50%, #1976d2 100%)',
+            zIndex: 1
+          }
+        }}>
 
-          <Grid item xs={12} sm={6} md={2}>
-            <TextField
-              fullWidth
-              type="date"
-              label="Start Date"
-              InputLabelProps={{ shrink: true }}
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              variant="outlined"
-              size="small"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                },
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <TextField
-              fullWidth
-              type="date"
-              label="End Date"
-              InputLabelProps={{ shrink: true }}
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              variant="outlined"
-              size="small"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                },
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <Button
-              fullWidth
-              variant="outlined"
-              size="small"
-              onClick={handleClearFilters}
-              sx={{ height: '40px' }}
-            >
-              Clear
-            </Button>
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <Button
-              fullWidth
-              variant="contained"
-              color="primary"
-              startIcon={<PrintIcon />}
-              onClick={handlePrintList}
-              disabled={filteredSellers.length === 0}
-              sx={{ height: '40px' }}
-            >
-              Print
-            </Button>
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={1}>
-            <Button
-              fullWidth
-              variant="outlined"
-              size="small"
-              startIcon={<RefreshIcon />}
-              onClick={fetchSellers}
-              disabled={loading}
-              sx={{ height: '40px' }}
-            >
-              Refresh
-            </Button>
-          </Grid>
-        </Grid>
-
-        {(query || startDate || endDate) && (
-          <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            {query && <Chip label={`Search: ${query}`} onDelete={() => setQuery('')} size="small" />}
-            {startDate && <Chip label={`From: ${startDate}`} onDelete={() => setStartDate('')} size="small" />}
-            {endDate && <Chip label={`To: ${endDate}`} onDelete={() => setEndDate('')} size="small" />}
-          </Box>
-        )}
-      </Paper>
-
-      {/* Error Alert */}
-      {error && (
-        <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
-          <CircularProgress />
+        {/* Header Section - Responsive */}
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          mb: { xs: 1.5, sm: 2 },
+          gap: { xs: 1, sm: 2 },
+          flexWrap: 'wrap',
+          flexDirection: { xs: 'column', sm: 'row' },
+          textAlign: { xs: 'center', sm: 'left' },
+          p: { xs: 2, sm: 3 },
+          borderRadius: { xs: 2, sm: 3 },
+          background: `linear-gradient(135deg, ${darkMode ? 'rgba(25, 118, 210, 0.1)' : 'rgba(255, 255, 255, 0.9)'} 0%, ${darkMode ? 'rgba(66, 165, 245, 0.05)' : 'rgba(248, 249, 250, 0.8)'} 100%)`,
+          backdropFilter: 'blur(10px)',
+          border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          position: 'relative',
+          overflow: 'hidden',
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            top: '-50%',
+            right: '-50%',
+            width: '200%',
+            height: '200%',
+            background: 'radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%)',
+            animation: 'pulse 4s ease-in-out infinite',
+          }
+        }}>
+          <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />
+          <Typography
+            variant={isSm ? 'h6' : 'h4'}
+            color="primary"
+            sx={{
+              fontWeight: 700,
+              fontSize: { xs: '1.1rem', sm: '1.5rem', md: '2rem' }
+            }}
+          >
+            Seller Clients Management
+          </Typography>
         </Box>
-      )}
 
-      {/* Data Table */}
-      {!loading && (
-        <Paper
-          elevation={3}
-          sx={{
-            backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-            borderRadius: 2,
-            border: darkMode ? '1px solid #333' : 'none',
-            overflow: 'hidden',
-          }}
-        >
-          {filteredSellers.length === 0 ? (
-            <Box
-              sx={{
-                p: 4,
-                textAlign: 'center',
-                backgroundColor: darkMode ? '#1e1e1e' : '#fafafa',
-              }}
-            >
-              <Typography variant="h6" color="textSecondary" sx={{ mb: 1 }}>
-                No sellers found
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                {sellers.length === 0 ? 'No sellers available.' : 'Try adjusting your search filters.'}
-              </Typography>
-            </Box>
-          ) : (
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', borderBottom: '2px solid #1976d2' }}>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>S/N</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Seller Name</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Shop Name</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Contact</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Created Date</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', textAlign: 'center' }}>
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {filteredSellers.map((seller, idx) => (
-                    <TableRow
-                      key={seller._id}
-                      sx={{
-                        '&:hover': {
-                          backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                          cursor: 'pointer',
-                          transition: 'background-color 0.2s ease',
-                        },
-                        backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                        borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                      }}
-                    >
-                      <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
-                        {idx + 1}
-                      </TableCell>
-                      <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                        {seller.username || '-'}
-                      </TableCell>
-                      <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                        {seller.shopName ? (
-                          <Chip label={seller.shopName} size="small" variant="outlined" />
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
-                      <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                        {seller.contact || seller.email || '-'}
-                      </TableCell>
-                      <TableCell sx={{ color: darkMode ? '#fff' : '#666', fontSize: '0.875rem' }}>
-                        {seller.createdAt ? new Date(seller.createdAt).toLocaleDateString() : '-'}
-                      </TableCell>
-                      <TableCell sx={{ textAlign: 'center', display: 'flex', gap: 1, justifyContent: 'center' }}>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="secondary"
-                          startIcon={<PrintIcon />}
-                          onClick={() => fetchSellerDetails(seller)}
-                          sx={{
-                            textTransform: 'none',
-                            borderRadius: 1,
-                          }}
-                        >
-                          All Clients
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          color="primary"
-                          startIcon={<VisibilityIcon />}
-                          onClick={() => openSellerClients(seller)}
-                          sx={{
-                            textTransform: 'none',
-                            borderRadius: 1,
-                            '&:hover': { boxShadow: 2 },
-                          }}
-                        >
-                          View Clients
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-
-          {/* Footer with Summary */}
-          {filteredSellers.length > 0 && (
-            <Box
-              sx={{
-                p: 2,
-                backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
-                borderTop: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                textAlign: 'right',
-              }}
-            >
-              <Typography variant="body2" color="textSecondary">
-                Showing <strong>{filteredSellers.length}</strong> of <strong>{sellers.length}</strong> sellers
-              </Typography>
-            </Box>
-          )}
-        </Paper>
-      )}
-
-      {/* Seller Details Modal */}
-      {selectedSellerDetail && (
+        {/* Filters Paper */}
         <Paper
           elevation={6}
           sx={{
-            p: 3,
-            mb: 3,
-            backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-            borderRadius: 2,
-            border: darkMode ? '1px solid #333' : 'none',
-            marginTop: 3,
-          }}
-        >
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-              {selectedSellerDetail.username} - All Clients & Refunds
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            p: { xs: 1, sm: 2, md: 4 },
+            borderRadius: { xs: 3, sm: 2, md: 6 },
+            background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#ffffff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15), 0 10px 20px rgba(0, 0, 0, 0.1)',
+            maxWidth: {
+              xs: 'calc(85vw - 10px)',
+              sm: '100%',
+              md: 'calc(107vw - 300px)'
+            },
+            width: '100%',
+            overflowX: 'hidden',
+            mx: 'auto',
+            minWidth: 0,
+            position: 'relative',
+            border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '3px',
+              background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 50%, #1976d2 100%)',
+              borderRadius: '3px 3px 0 0'
+            }
+          }}>
+          <Grid container spacing={{ xs: 1, sm: 2 }} alignItems="center">
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                fullWidth
+                label="Search"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Name, Shop, Email..."
+                variant="outlined"
+                size="small"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                    '&:hover fieldset': { borderColor: '#1976d2' },
+                    '&.Mui-focused fieldset': {
+                      borderColor: '#1976d2',
+                      boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                    },
+                    transition: 'all 0.3s ease'
+                  },
+                  '& .MuiInputLabel-root': {
+                    fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                    color: darkMode ? '#aaa' : '#666',
+                    '&.Mui-focused': { color: '#1976d2' }
+                  },
+                  '& .MuiInputBase-root': {
+                    fontSize: { xs: '0.875rem', sm: '1rem' },
+                    transition: 'all 0.3s ease'
+                  }
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2}>
+              <TextField
+                fullWidth
+                type="date"
+                label="Start Date"
+                InputLabelProps={{ shrink: true, style: { fontSize: '0.8rem' } }}
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                variant="outlined"
+                size="small"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                  },
+                  '& .MuiInputBase-root': {
+                    fontSize: { xs: '0.875rem', sm: '1rem' }
+                  }
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2}>
+              <TextField
+                fullWidth
+                type="date"
+                label="End Date"
+                InputLabelProps={{ shrink: true, style: { fontSize: '0.8rem' } }}
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                variant="outlined"
+                size="small"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                  },
+                  '& .MuiInputBase-root': {
+                    fontSize: { xs: '0.875rem', sm: '1rem' }
+                  }
+                }}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2}>
               <Button
+                fullWidth
+                variant="outlined"
+                size="small"
+                onClick={handleClearFilters}
+                sx={{
+                  height: '40px',
+                  fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                  minWidth: { xs: '100%', sm: '120px' },
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  border: '2px solid',
+                  borderColor: '#1976d2',
+                  color: '#1976d2',
+                  backgroundColor: 'transparent',
+                  transition: 'all 0.3s ease',
+                  '&:hover': {
+                    backgroundColor: '#1976d2',
+                    color: '#fff',
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 8px 16px rgba(25, 118, 210, 0.3)'
+                  },
+                  '&:active': {
+                    transform: 'translateY(0)',
+                    boxShadow: '0 4px 8px rgba(25, 118, 210, 0.3)'
+                  }
+                }}
+              >
+                Clear
+              </Button>
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={2}>
+              <Button
+                fullWidth
                 variant="contained"
                 color="primary"
                 startIcon={<PrintIcon />}
-                onClick={handlePrintAllSellerClients}
-                disabled={sellerClients.length === 0}
-                sx={{ textTransform: 'none', borderRadius: 1 }}
-              >
-                Print Report
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => {
-                  setSelectedSellerDetail(null);
-                  setSellerClients([]);
-                  setSellerRefundInvoices([]);
+                onClick={handlePrintList}
+                disabled={filteredSellers.length === 0}
+                sx={{
+                  height: '40px',
+                  fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                  minWidth: { xs: '100%', sm: '140px' },
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  background: 'linear-gradient(135deg, #1976d2 0%, #42a5f5 100%)',
+                  boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)',
+                  transition: 'all 0.3s ease',
+                  '&:hover': {
+                    background: 'linear-gradient(135deg, #1565c0 0%, #2196f3 100%)',
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 8px 20px rgba(25, 118, 210, 0.4)'
+                  },
+                  '&:active': {
+                    transform: 'translateY(0)',
+                    boxShadow: '0 4px 12px rgba(25, 118, 210, 0.3)'
+                  },
+                  '&:disabled': {
+                    background: 'linear-gradient(135deg, #ccc 0%, #ddd 100%)',
+                    transform: 'none',
+                    boxShadow: 'none'
+                  }
                 }}
-                sx={{ textTransform: 'none', borderRadius: 1 }}
               >
-                Close
+                {window.innerWidth < 600 ? 'Print' : 'Print List'}
               </Button>
-            </Box>
-          </Box>
-
-          {/* Seller Info */}
-          <Paper sx={{ p: 2, mb: 2, backgroundColor: darkMode ? '#2a2a2a' : '#f0f7ff', borderLeft: '4px solid #1976d2' }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6} md={3}>
-                <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600 }}>
-                  Seller Name
-                </Typography>
-                <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333' }}>
-                  {selectedSellerDetail.username || '-'}
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600 }}>
-                  Shop Name
-                </Typography>
-                <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333' }}>
-                  {selectedSellerDetail.shopName || '-'}
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600 }}>
-                  Email
-                </Typography>
-                <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333' }}>
-                  {selectedSellerDetail.email || '-'}
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={6} md={3}>
-                <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600 }}>
-                  Contact
-                </Typography>
-                <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333' }}>
-                  {selectedSellerDetail.contact || '-'}
-                </Typography>
-              </Grid>
             </Grid>
-          </Paper>
 
-          {loadingSellerDetail ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
-              <CircularProgress />
+            <Grid item xs={12} sm={6} md={1}>
+              <Button
+                fullWidth
+                variant="outlined"
+                size="small"
+                startIcon={<RefreshIcon />}
+                onClick={fetchSellers}
+                disabled={loading}
+                sx={{
+                  height: '40px',
+                  fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                  minWidth: { xs: '100%', sm: '80px' },
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  border: '2px solid',
+                  borderColor: '#4caf50',
+                  color: '#4caf50',
+                  backgroundColor: 'transparent',
+                  transition: 'all 0.3s ease',
+                  '&:hover': {
+                    backgroundColor: '#4caf50',
+                    color: '#fff',
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 8px 16px rgba(76, 175, 80, 0.3)'
+                  },
+                  '&:active': {
+                    transform: 'translateY(0)',
+                    boxShadow: '0 4px 8px rgba(76, 175, 80, 0.3)'
+                  },
+                  '&:disabled': {
+                    borderColor: '#ccc',
+                    color: '#ccc',
+                    transform: 'none',
+                    boxShadow: 'none'
+                  }
+                }}
+              >
+                {window.innerWidth < 600 ? '' : 'Refresh'}
+              </Button>
+            </Grid>
+          </Grid>
+
+          {(query || startDate || endDate) && (
+            <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              {query && <Chip
+                label={`Search: ${query.length > 15 ? query.substring(0, 15) + '...' : query}`}
+                onDelete={() => setQuery('')}
+                size="small"
+                sx={{
+                  fontSize: { xs: '0.65rem', sm: '0.75rem' },
+                  height: { xs: 24, sm: 32 },
+                  background: 'linear-gradient(135deg, #ff9800 0%, #ffc107 100%)',
+                  color: '#fff',
+                  fontWeight: 500,
+                  '& .MuiChip-deleteIcon': {
+                    color: '#fff',
+                    '&:hover': {
+                      color: '#f44336'
+                    }
+                  }
+                }}
+              />}
+              {startDate && <Chip
+                label={`From: ${startDate}`}
+                onDelete={() => setStartDate('')}
+                size="small"
+                sx={{
+                  fontSize: { xs: '0.65rem', sm: '0.75rem' },
+                  height: { xs: 24, sm: 32 },
+                  background: 'linear-gradient(135deg, #2196f3 0%, #03a9f4 100%)',
+                  color: '#fff',
+                  fontWeight: 500,
+                  '& .MuiChip-deleteIcon': {
+                    color: '#fff',
+                    '&:hover': {
+                      color: '#f44336'
+                    }
+                  }
+                }}
+              />}
+              {endDate && <Chip
+                label={`To: ${endDate}`}
+                onDelete={() => setEndDate('')}
+                size="small"
+                sx={{
+                  fontSize: { xs: '0.65rem', sm: '0.75rem' },
+                  height: { xs: 24, sm: 32 },
+                  background: 'linear-gradient(135deg, #4caf50 0%, #8bc34a 100%)',
+                  color: '#fff',
+                  fontWeight: 500,
+                  '& .MuiChip-deleteIcon': {
+                    color: '#fff',
+                    '&:hover': {
+                      color: '#f44336'
+                    }
+                  }
+                }}
+              />}
             </Box>
-          ) : (
-            <>
-              {/* Clients Table */}
-              {sellerClients.length > 0 && (
-                <>
-                  <Typography variant="h6" sx={{ mb: 2, color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                    Customers ({sellerClients.length})
-                  </Typography>
-                  <TableContainer sx={{ mb: 3 }}>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>S/N</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Name</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Email</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Contact</TableCell>
-                          <TableCell align="center" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Invoices</TableCell>
-                          <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Total Sales</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {sellerClients.map((cust, idx) => {
-                          const custTotal = (cust.invoices || []).reduce((sum, inv) => sum + Number(inv.totalAmount || inv.netAmount || 0), 0);
-                          return (
-                            <TableRow
-                              key={idx}
-                              sx={{
-                                '&:hover': {
-                                  backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                                  transition: 'background-color 0.2s ease',
-                                },
-                                backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                                borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                              }}
-                            >
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
-                                {idx + 1}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {cust.name || '-'}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {cust.email || '-'}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {cust.contact || '-'}
-                              </TableCell>
-                              <TableCell align="center" sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {cust.invoices?.length || 0}
-                              </TableCell>
-                              <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
-                                Rs. {custTotal.toLocaleString()}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', fontWeight: 'bold' }}>
-                          <TableCell colSpan={5} sx={{ fontWeight: 600 }}>
-                            TOTAL
-                          </TableCell>
-                          <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                            Rs. {sellerClients.reduce((sum, c) => sum + (c.invoices || []).reduce((s, inv) => s + Number(inv.totalAmount || inv.netAmount || 0), 0), 0).toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </>
-              )}
-
-              {/* Refund Invoices Table */}
-              {sellerRefundInvoices.length > 0 && (
-                <>
-                  <Typography variant="h6" sx={{ mb: 2, color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                    Refund Invoices ({sellerRefundInvoices.length})
-                  </Typography>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>S/N</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Invoice #</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Date</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Customer</TableCell>
-                          <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Refund Details</TableCell>
-                          <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333' }}>Refund Amount</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {sellerRefundInvoices.map((inv, idx) => {
-                          const totalRefundAmount = (inv.refunds || []).reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0);
-                          return (
-                            <TableRow
-                              key={idx}
-                              sx={{
-                                '&:hover': {
-                                  backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
-                                  transition: 'background-color 0.2s ease',
-                                },
-                                backgroundColor: darkMode ? '#1e1e1e' : '#fff',
-                                borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
-                              }}
-                            >
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
-                                {idx + 1}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {inv.invoiceNumber || '-'}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {new Date(inv.createdAt).toLocaleDateString()}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
-                                {inv.customerName || '-'}
-                              </TableCell>
-                              <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontSize: '0.85rem' }}>
-                                {(inv.refunds || []).map((ref, ridx) => (
-                                  <Box key={ridx} sx={{ mb: 0.5 }}>
-                                    <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
-                                      {ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}
-                                    </Typography>
-                                    <Typography variant="caption" sx={{ display: 'block' }}>
-                                      {(ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ')} ({ref.totalRefundQty || 0} pcs)
-                                    </Typography>
-                                  </Box>
-                                ))}
-                              </TableCell>
-                              <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
-                                Rs. {totalRefundAmount.toLocaleString()}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                        <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', fontWeight: 'bold' }}>
-                          <TableCell colSpan={5} sx={{ fontWeight: 600 }}>
-                            TOTAL REFUNDED
-                          </TableCell>
-                          <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
-                            Rs. {sellerRefundInvoices.reduce((sum, inv) => sum + (inv.refunds || []).reduce((s, r) => s + (r.totalRefundAmount || 0), 0), 0).toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </>
-              )}
-
-              {sellerClients.length === 0 && sellerRefundInvoices.length === 0 && (
-                <Box sx={{ p: 3, textAlign: 'center' }}>
-                  <Typography variant="body2" color="textSecondary">
-                    No customers or refund invoices found for this seller.
-                  </Typography>
-                </Box>
-              )}
-            </>
           )}
         </Paper>
-      )}
-    </Box>
+
+        {/* Error Alert */}
+        {error && (
+          <Alert
+            severity="error"
+            onClose={() => setError(null)}
+            sx={{
+              mb: 2,
+              borderRadius: 2,
+              boxShadow: '0 4px 12px rgba(244, 67, 54, 0.15)',
+              '& .MuiAlert-message': {
+                fontWeight: 500
+              }
+            }}
+          >
+            {error}
+          </Alert>
+        )}
+
+        {/* Loading State */}
+        {loading && (
+          <Box sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: 300,
+            background: `linear-gradient(135deg, ${darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)'} 0%, ${darkMode ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.01)'} 100%)`,
+            borderRadius: 3,
+            backdropFilter: 'blur(10px)',
+            border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`
+          }}>
+            <Box sx={{ textAlign: 'center' }}>
+              <CircularProgress
+                size={60}
+                thickness={4}
+                sx={{
+                  color: '#1976d2',
+                  mb: 2,
+                  '& .MuiCircularProgress-circle': {
+                    strokeLinecap: 'round'
+                  }
+                }}
+              />
+              <Typography
+                variant="body2"
+                sx={{
+                  color: darkMode ? '#fff' : '#666',
+                  fontWeight: 500,
+                  fontSize: '0.9rem'
+                }}
+              >
+                Loading seller data...
+              </Typography>
+            </Box>
+          </Box>
+        )}
+
+        {/* Data Table */}
+        {!loading && (
+          <Paper
+            elevation={6}
+            sx={{
+              p: { xs: 1, sm: 2, md: 4 },
+              borderRadius: { xs: 3, sm: 2, md: 6 },
+              background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#ffffff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15), 0 10px 20px rgba(0, 0, 0, 0.1)',
+              maxWidth: {
+                xs: 'calc(85vw - 10px)',
+                sm: '100%',
+                md: 'calc(107vw - 300px)'
+              },
+              width: '100%',
+              overflowX: 'hidden',
+              mx: 'auto',
+              minWidth: 0,
+              backgroundColor: '#fff',
+              mb: 3,
+              position: 'relative',
+              border: `1px solid ${darkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+              '&::before': {
+                content: '""',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '3px',
+                background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 50%, #1976d2 100%)',
+                borderRadius: '3px 3px 0 0'
+              }
+            }}
+          >
+            {filteredSellers.length === 0 ? (
+              <Box
+                sx={{
+                  p: { xs: 2, sm: 3, md: 4 },
+                  textAlign: 'center',
+                  backgroundColor: darkMode ? '#1e1e1e' : '#fafafa',
+                }}
+              >
+                <Typography variant="h6" color="textSecondary" sx={{ mb: 1, fontSize: { xs: '1rem', sm: '1.2rem' } }}>
+                  No sellers found
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
+                  {sellers.length === 0 ? 'No sellers available.' : 'Try adjusting your search filters.'}
+                </Typography>
+              </Box>
+            ) : (
+              <TableContainer
+                component={Paper}
+                sx={{
+                  mb: 2,
+                  width: '100%',
+                  maxWidth: '100%',
+                  minWidth: 0,
+                  overflowX: 'auto', // Scrollable for all screen sizes including desktop
+                  overflowY: 'hidden',
+                  WebkitOverflowScrolling: 'touch',
+                  position: 'relative',
+                  borderRadius: 2,
+                  boxSizing: 'border-box',
+                  '&::-webkit-scrollbar': {
+                    height: { xs: '4px', sm: '6px' },
+                  },
+                  '&::-webkit-scrollbar-track': {
+                    backgroundColor: darkMode ? '#2a2a2a' : '#f1f1f1',
+                    borderRadius: '3px',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    backgroundColor: darkMode ? '#666' : '#888',
+                    borderRadius: '3px',
+                  },
+                }}
+              >
+                <Table
+                  stickyHeader
+                  sx={{
+                    minWidth: { xs: 800, sm: '100%', md: '100%' }, // Only set minWidth for mobile
+                    width: '100%', // Full width for all screen sizes
+                    tableLayout: { xs: 'auto', sm: 'auto', md: 'auto' }, // Auto layout for all sizes
+                    whiteSpace: { xs: 'nowrap', sm: 'nowrap', md: 'nowrap' },
+                    minHeight: 1,
+                  }}
+                >
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', borderBottom: '2px solid #1976d2' }}>
+                      <TableCell sx={{
+                        fontWeight: 'bold',
+                        fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                        padding: { xs: '8px 6px', sm: '12px 16px' },
+                        position: 'sticky',
+                        left: 0,
+                        backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                        zIndex: 3,
+                        boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                        minWidth: { xs: 10, sm: 100 }
+                      }}>S/N</TableCell>
+                      <TableCell sx={{
+                        fontWeight: 'bold',
+                        fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                        padding: { xs: '8px 6px', sm: '12px 16px' },
+                        position: 'sticky',
+                        left: { xs: 36, sm: 100 },
+                        backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                        zIndex: 3,
+                        boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                        minWidth: { xs: 50, sm: 120 }
+                      }}>Seller Name</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Shop Name</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Contact</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Created Date</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, textAlign: 'center', padding: { xs: '8px 6px', sm: '12px 16px' } }}>
+                        Actions
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {filteredSellers.map((seller, idx) => (
+                      <TableRow
+                        key={seller._id}
+                        sx={{
+                          '&:hover': {
+                            backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.2s ease',
+                          },
+                          backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                          borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                        }}
+                      >
+                        <TableCell sx={{
+                          ...cellSx,
+                          position: 'sticky',
+                          left: 0,
+                          backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                          zIndex: 1,
+                          boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                          minWidth: { xs: 10, sm: 100 }
+                        }}>
+                          {idx + 1}
+                        </TableCell>
+                        <TableCell sx={{
+                          ...cellSx,
+                          position: 'sticky',
+                          left: { xs: 36, sm: 100 },
+                          backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                          zIndex: 1,
+                          boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                          minWidth: { xs: 50, sm: 120 }
+                        }}>
+                          {seller.username || '-'}
+                        </TableCell>
+                        <TableCell sx={cellSx}>
+                          {seller.shopName ? (
+                            <Chip label={seller.shopName.length > 15 ? seller.shopName.substring(0, 15) + '...' : seller.shopName} size="small" variant="outlined" sx={{ fontSize: { xs: '0.65rem', sm: '0.7rem' }, height: { xs: 20, sm: 24 } }} />
+                          ) : (
+                            '-'
+                          )}
+                        </TableCell>
+                        <TableCell sx={cellSx}>
+                          {seller.contact && seller.contact.length > 20 ? seller.contact.substring(0, 20) + '...' : seller.contact || seller.email || '-'}
+                        </TableCell>
+                        <TableCell sx={{ ...cellSx, color: darkMode ? '#fff' : '#666' }}>
+                          {seller.createdAt ? new Date(seller.createdAt).toLocaleDateString() : '-'}
+                        </TableCell>
+                        <TableCell sx={{ textAlign: 'center', display: 'flex', gap: 0.5, justifyContent: 'center', flexWrap: 'wrap', py: 1 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="secondary"
+                            startIcon={<PrintIcon />}
+                            onClick={() => fetchSellerDetails(seller)}
+                            sx={{
+                              textTransform: 'none',
+                              borderRadius: 1,
+                              fontSize: { xs: '0.65rem', sm: '0.7rem' },
+                              minWidth: { xs: '50px', sm: '70px' },
+                              height: { xs: 28, sm: 32 }
+                            }}
+                          >
+                            {window.innerWidth < 600 ? 'Print' : 'Print'}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="primary"
+                            startIcon={<VisibilityIcon />}
+                            onClick={() => openSellerClients(seller)}
+                            sx={{
+                              textTransform: 'none',
+                              borderRadius: 1,
+                              fontSize: { xs: '0.65rem', sm: '0.7rem' },
+                              minWidth: { xs: '50px', sm: '70px' },
+                              height: { xs: 28, sm: 32 }
+                            }}
+                          >
+                            {window.innerWidth < 600 ? 'View' : 'View Clients'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        )}
+
+        {/* Seller Details Modal */}
+        {selectedSellerDetail && (
+          <Paper
+            elevation={6}
+            sx={{
+              p: { xs: 1, sm: 2, md: 3 },
+              mb: 3,
+              backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+              borderRadius: { xs: 3, sm: 2, md: 6 },
+              border: darkMode ? '1px solid #333' : 'none',
+              marginTop: 3,
+              maxWidth: {
+                xs: 'calc(90vw - 16px)',
+                sm: '100%',
+                md: 'calc(107vw - 300px)'
+              },
+              width: '100%',
+              overflowX: 'hidden',
+              mx: 'auto',
+              minWidth: 0,
+            }}
+          >
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, mb: 2, gap: 1 }}>
+              <Typography variant={isSm ? 'h6' : 'h5'} sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600, fontSize: { xs: '1.1rem', sm: '1.3rem', md: '1.5rem' } }}>
+                {selectedSellerDetail.username} - All Clients & Refunds
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, width: { xs: '100%', sm: 'auto' }, flexDirection: { xs: 'column', sm: 'row' } }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<PrintIcon />}
+                  onClick={handlePrintAllSellerClients}
+                  disabled={sellerClients.length === 0}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: 1,
+                    flex: { xs: 1, sm: 'none' },
+                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                    height: { xs: 36, sm: 40 },
+                    minWidth: { xs: '100%', sm: '120px' }
+                  }}
+                >
+                  {window.innerWidth < 600 ? 'Print' : 'Print Report'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    setSelectedSellerDetail(null);
+                    setSellerClients([]);
+                    setSellerRefundInvoices([]);
+                  }}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: 1,
+                    flex: { xs: 1, sm: 'none' },
+                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                    height: { xs: 36, sm: 40 },
+                    minWidth: { xs: '100%', sm: '80px' }
+                  }}
+                >
+                  Close
+                </Button>
+              </Box>
+            </Box>
+
+            {/* Seller Info */}
+            <Paper sx={{
+              p: { xs: 1, sm: 1.5, md: 2 },
+              mb: 2,
+              backgroundColor: darkMode ? '#2a2a2a' : '#f0f7ff',
+              borderLeft: '4px solid #1976d2',
+              borderRadius: { xs: 2, sm: 2, md: 2 }
+            }}>
+              <Grid container spacing={{ xs: 1, sm: 2 }}>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                    Seller Name
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333', fontSize: { xs: '0.8rem', sm: '0.875rem' }, wordBreak: 'break-word' }}>
+                    {selectedSellerDetail.username || '-'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                    Shop Name
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333', fontSize: { xs: '0.8rem', sm: '0.875rem' }, wordBreak: 'break-word' }}>
+                    {selectedSellerDetail.shopName || '-'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                    Email
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333', fontSize: { xs: '0.8rem', sm: '0.875rem' }, wordBreak: 'break-word' }}>
+                    {selectedSellerDetail.email || '-'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Typography variant="caption" sx={{ color: darkMode ? '#ddd' : '#666', fontWeight: 600, fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                    Contact
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: darkMode ? '#fff' : '#333', fontSize: { xs: '0.8rem', sm: '0.875rem' }, wordBreak: 'break-word' }}>
+                    {selectedSellerDetail.contact || '-'}
+                  </Typography>
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {loadingSellerDetail ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <>
+                {/* Clients Table */}
+                {sellerClients.length > 0 && (
+                  <>
+                    <Typography variant="h6" sx={{ mb: 2, color: darkMode ? '#fff' : '#333', fontWeight: 600, fontSize: { xs: '1rem', sm: '1.1rem', md: '1.25rem' } }}>
+                      Customers ({sellerClients.length})
+                    </Typography>
+                    <TableContainer
+                      component={Paper}
+                      sx={{
+                        mb: 3,
+                        width: '100%',
+                        maxWidth: '100%',
+                        minWidth: 0,
+                        overflowX: 'auto', // Scrollable for all screen sizes including desktop
+                        overflowY: 'hidden',
+                        WebkitOverflowScrolling: 'touch',
+                        position: 'relative',
+                        borderRadius: 2,
+                        boxSizing: 'border-box',
+                        '&::-webkit-scrollbar': {
+                          height: { xs: '4px', sm: '6px' },
+                        },
+                        '&::-webkit-scrollbar-track': {
+                          backgroundColor: darkMode ? '#2a2a2a' : '#f1f1f1',
+                          borderRadius: '3px',
+                        },
+                        '&::-webkit-scrollbar-thumb': {
+                          backgroundColor: darkMode ? '#666' : '#888',
+                          borderRadius: '3px',
+                        },
+                      }}
+                    >
+                      <Table
+                        stickyHeader
+                        sx={{
+                          minWidth: { xs: 800, sm: '100%', md: '100%' }, // Only set minWidth for mobile
+                          width: '100%', // Full width for all screen sizes
+                          tableLayout: { xs: 'auto', sm: 'auto', md: 'auto' }, // Auto layout for all sizes
+                          whiteSpace: { xs: 'nowrap', sm: 'nowrap', md: 'nowrap' },
+                          minHeight: 1,
+                        }}
+                      >
+                        <TableHead>
+                          <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
+                            <TableCell sx={{
+                              fontWeight: 'bold',
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                              padding: { xs: '8px 6px', sm: '12px 16px' },
+                              position: 'sticky',
+                              left: 0,
+                              backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                              zIndex: 3,
+                              boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                              minWidth: { xs: 10, sm: 100 }
+                            }}>S/N</TableCell>
+                            <TableCell sx={{
+                              fontWeight: 'bold',
+                              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                              padding: { xs: '8px 6px', sm: '12px 16px' },
+                              position: 'sticky',
+                              left: { xs: 36, sm: 100 },
+                              backgroundColor: darkMode ? '#2a2a2a' : '#f5f5f5',
+                              zIndex: 3,
+                              boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                              minWidth: { xs: 50, sm: 120 }
+                            }}>Name</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Email</TableCell>
+                            <TableCell sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Contact</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Invoices</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'bold', fontSize: { xs: '0.75rem', sm: '0.875rem' }, padding: { xs: '8px 6px', sm: '12px 16px' } }}>Total Sales</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {sellerClients.map((cust, idx) => {
+                            const custTotal = (cust.invoices || []).reduce((sum, inv) => sum + Number(inv.totalAmount || inv.netAmount || 0), 0);
+                            return (
+                              <TableRow
+                                key={idx}
+                                sx={{
+                                  '&:hover': {
+                                    backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                                    transition: 'background-color 0.2s ease',
+                                  },
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                                }}
+                              >
+                                <TableCell sx={{
+                                  ...cellSx,
+                                  position: 'sticky',
+                                  left: 0,
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  zIndex: 1,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 10, sm: 100 }
+                                }}>
+                                  {idx + 1}
+                                </TableCell>
+                                <TableCell sx={{
+                                  ...cellSx,
+                                  position: 'sticky',
+                                  left: { xs: 36, sm: 100 },
+                                  backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                  zIndex: 1,
+                                  boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                                  minWidth: { xs: 50, sm: 120 }
+                                }}>
+                                  {cust.name && cust.name.length > 15 ? cust.name.substring(0, 15) + '...' : cust.name || '-'}
+                                </TableCell>
+                                <TableCell sx={cellSx}>
+                                  {cust.email && cust.email.length > 20 ? cust.email.substring(0, 20) + '...' : cust.email || '-'}
+                                </TableCell>
+                                <TableCell sx={cellSx}>
+                                  {cust.contact && cust.contact.length > 15 ? cust.contact.substring(0, 15) + '...' : cust.contact || '-'}
+                                </TableCell>
+                                <TableCell align="center" sx={cellSx}>
+                                  {cust.invoices?.length || 0}
+                                </TableCell>
+                                <TableCell align="right" sx={{ ...cellSx, fontWeight: 500 }}>
+                                  Rs. {custTotal.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                          <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', fontWeight: 'bold' }}>
+                            <TableCell colSpan={5} sx={{ fontWeight: 600 }}>
+                              TOTAL
+                            </TableCell>
+                            <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
+                              Rs. {sellerClients.reduce((sum, c) => sum + (c.invoices || []).reduce((s, inv) => s + Number(inv.totalAmount || inv.netAmount || 0), 0), 0).toLocaleString()}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </>
+                )}
+
+                {/* Refund Invoices Table */}
+                {sellerRefundInvoices.length > 0 && (
+                  <>
+                    <Typography variant="h6" sx={{ mb: 2, color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
+                      Refund Invoices ({sellerRefundInvoices.length})
+                    </Typography>
+                    <Box sx={{ overflowX: { xs: 'auto', md: 'visible' } }}>
+                      <TableContainer>
+                        <Table size="small" sx={{ minWidth: { xs: 600, md: 'auto' } }}>
+                          <TableHead>
+                            <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5' }}>
+                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 50 }}>S/N</TableCell>
+                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 80 }}>Invoice #</TableCell>
+                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 80 }}>Date</TableCell>
+                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 120 }}>Customer</TableCell>
+                              <TableCell sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 150 }}>Refund Details</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 600, color: darkMode ? '#fff' : '#333', minWidth: 100 }}>Refund Amount</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {sellerRefundInvoices.map((inv, idx) => {
+                              const totalRefundAmount = (inv.refunds || []).reduce((sum, r) => sum + (r.totalRefundAmount || 0), 0);
+                              return (
+                                <TableRow
+                                  key={idx}
+                                  sx={{
+                                    '&:hover': {
+                                      backgroundColor: darkMode ? '#2a2a2a' : '#f9f9f9',
+                                      transition: 'background-color 0.2s ease',
+                                    },
+                                    backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                                    borderBottom: `1px solid ${darkMode ? '#333' : '#e0e0e0'}`,
+                                  }}
+                                >
+                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
+                                    {idx + 1}
+                                  </TableCell>
+                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
+                                    {inv.invoiceNumber || '-'}
+                                  </TableCell>
+                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
+                                    {new Date(inv.createdAt).toLocaleDateString()}
+                                  </TableCell>
+                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333' }}>
+                                    {inv.customerName || '-'}
+                                  </TableCell>
+                                  <TableCell sx={{ color: darkMode ? '#fff' : '#333', fontSize: '0.85rem' }}>
+                                    {(inv.refunds || []).map((ref, ridx) => (
+                                      <Box key={ridx} sx={{ mb: 0.5 }}>
+                                        <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>
+                                          {ref.createdAt ? new Date(ref.createdAt).toLocaleDateString() : '-'}
+                                        </Typography>
+                                        <Typography variant="caption" sx={{ display: 'block' }}>
+                                          {(ref.items || []).map(i => i.productName || i.SKU || 'Item').join(', ')} ({ref.totalRefundQty || 0} pcs)
+                                        </Typography>
+                                      </Box>
+                                    ))}
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 500 }}>
+                                    Rs. {totalRefundAmount.toLocaleString()}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                            <TableRow sx={{ bgcolor: darkMode ? '#2a2a2a' : '#f5f5f5', fontWeight: 'bold' }}>
+                              <TableCell colSpan={5} sx={{ fontWeight: 600 }}>
+                                TOTAL REFUNDED
+                              </TableCell>
+                              <TableCell align="right" sx={{ color: darkMode ? '#fff' : '#333', fontWeight: 600 }}>
+                                Rs. {sellerRefundInvoices.reduce((sum, inv) => sum + (inv.refunds || []).reduce((s, r) => s + (r.totalRefundAmount || 0), 0), 0).toLocaleString()}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
+                  </>
+                )}
+
+                {sellerClients.length === 0 && sellerRefundInvoices.length === 0 && (
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography variant="body2" color="textSecondary">
+                      No customers or refund invoices found for this seller.
+                    </Typography>
+                  </Box>
+                )}
+              </>
+            )}
+          </Paper>
+        )}
+      </Box>
+    </Fade>
   );
 };
 

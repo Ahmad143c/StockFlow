@@ -1,174 +1,1259 @@
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import API from '../api/api';
-import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, TextField, InputAdornment, MenuItem, Select, InputLabel, FormControl, Divider, Grid, Chip } from '@mui/material';
+import {
+  Box,
+  Typography,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  Fade,
+  TableHead,
+  TableRow,
+  Button,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  InputAdornment,
+  MenuItem,
+  Select,
+  InputLabel,
+  FormControl,
+  Divider,
+  Grid,
+  Chip,
+  Avatar,
+  Card,
+  CardContent,
+  CircularProgress,
+  Stack,
+  Alert,
+} from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useDarkMode } from '../context/DarkModeContext';
+
+// Icons
+import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import SearchIcon from '@mui/icons-material/Search';
 import PrintIcon from '@mui/icons-material/Print';
+import CategoryIcon from '@mui/icons-material/Category';
+import BrandingWatermarkIcon from '@mui/icons-material/BrandingWatermark';
+import ColorLensIcon from '@mui/icons-material/ColorLens';
+import InventoryIcon from '@mui/icons-material/Inventory';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import StorefrontIcon from '@mui/icons-material/Storefront';
+import QrCodeIcon from '@mui/icons-material/QrCode';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CloseIcon from '@mui/icons-material/Close';
+
 import jsPDF from 'jspdf';
+import API from '../api/api';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DEFAULT_UOM = ['pieces', 'boxes', 'kg', 'liters'];
+const DEFAULT_STATUS = ['Pending', 'Approved', 'Received', 'Partially Received', 'Cancelled'];
+const PAYMENT_TERMS_OPTIONS = ['Net 30', 'Net 60', 'COD', 'Advance Payment', 'Partial Payment', 'Cash Payment'];
+const PAYMENT_METHOD_OPTIONS = ['Bank Transfer', 'Cheque', 'Cash Payment'];
+const DEFAULT_DELIVERY_METHODS = ['Courier', 'In-house transport'];
+const DEFAULT_PURCHASE_TYPES = ['Local', 'International'];
+const DEFAULT_CURRENCY = ['PKR', 'DOLLAR', 'YAN'];
+
+const DEFAULT_CATEGORIES = [
+  'Electronics',
+  'Clothing',
+  'Home Appliances',
+  'Books',
+  'Other',
+];
+
+const ROWS_PER_PAGE = 10;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const formatDateTimeForInput = (dateTime) => {
+  if (!dateTime) return '';
+  try {
+    const date = new Date(dateTime);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  } catch {
+    return '';
+  }
+};
+
+const convertToISOString = (dateTimeStr) => {
+  if (!dateTimeStr) return '';
+  try {
+    return new Date(dateTimeStr).toISOString();
+  } catch {
+    return '';
+  }
+};
+
+const calculateDueDate = (paymentTerms, poDate) => {
+  if (!poDate || !['Net 30', 'Net 60'].includes(paymentTerms)) return '';
+  const date = new Date(poDate);
+  date.setDate(date.getDate() + (paymentTerms === 'Net 30' ? 30 : 60));
+  return date.toISOString().split('T')[0];
+};
+
+const getStatusColor = (status) => {
+  switch (status?.toLowerCase()) {
+    case 'approved':           return '#2e7d32';
+    case 'pending':            return '#fb8c00';
+    case 'cancelled':          return '#c62828';
+    case 'received':           return '#2e7d32';
+    case 'partially received': return '#ff9800';
+    default:                   return '#1e88e5';
+  }
+};
+
+const hexToRgb = (hex) => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+];
+
+const formatDateTimeCell = (dateStr) => {
+  if (!dateStr) return '-';
+  return (
+    <Box sx={{ fontSize: '0.75rem' }}>
+      <Box>{new Date(dateStr).toLocaleDateString()}</Box>
+      <Box sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+        {new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      </Box>
+    </Box>
+  );
+};
+
+/** Sort list so the most recently dated PO appears first. */
+const sortByMostRecent = (list) =>
+  [...list].sort((a, b) => {
+    const da = a.poDate ? new Date(a.poDate).getTime() : 0;
+    const db = b.poDate ? new Date(b.poDate).getTime() : 0;
+    if (db !== da) return db - da;
+    // Tie-break by _id (MongoDB ObjectId encodes creation time)
+    return (b._id || '').localeCompare(a._id || '');
+  });
+
+// ─── Empty form state for Add Product dialog ──────────────────────────────────
+
+const EMPTY_PRODUCT_FORM = {
+  name: '',
+  category: '',
+  subCategory: '',
+  brand: '',
+  vendor: '',
+  color: '',
+  costPerPiece: '',
+  sellingPerPiece: '',
+  piecesPerCarton: '',
+  SKU: '',
+  image: '',
+  warrantyMonths: '12',
+  warehouseAddress: '',
+};
+
+// ─── Additional Helpers ───────────────────────────────────────────────────────
+
+const generateSKU = (name = '') => {
+  const prefix = (String(name).trim().slice(0, 3) || 'PRD')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const randomPart = Math.random().toString(36).slice(2, 7).toUpperCase();
+  const timestamp = Date.now().toString().slice(-6);
+  return `${prefix}-${randomPart}-${timestamp}`;
+};
+
+// ─── PDF Generator ────────────────────────────────────────────────────────────
+
+const generatePDF = (order) => {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  // ── Reusable table header drawer ──
+  const drawTableHeader = (yPosition) => {
+    const tableWidth = pageWidth - 28;
+    doc.setFillColor(15, 37, 110);
+    doc.roundedRect(14, yPosition, tableWidth, 10, 2, 2, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('S/N',        18,              yPosition + 6);
+    doc.text('ITEM',       28,              yPosition + 6);
+    doc.text('DESCRIPTION',50,              yPosition + 6);
+    doc.text('CO',         87,              yPosition + 6);
+    doc.text('QTY',        115,             yPosition + 6, { align: 'right' });
+    doc.text('UNIT PRICE', 145,             yPosition + 6, { align: 'right' });
+    doc.text('TOTAL',      pageWidth - 17,  yPosition + 6, { align: 'right' });
+    return yPosition + 15;
+  };
+
+  // ── Reusable footer drawer ──
+  const drawFooter = () => {
+    const footerY = pageHeight - 18;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.5);
+    doc.line(14, footerY - 1, pageWidth - 14, footerY - 1);
+
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.setFont('helvetica', 'italic');
+    doc.text('Thank you for your business!', pageWidth / 2, footerY + 4, { align: 'center' });
+
+    const genTime = `${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Generated: ${genTime}`, 14, footerY + 10);
+  };
+
+  // ── Page header ──
+  doc.setFillColor(15, 37, 110);
+  doc.rect(0, 0, pageWidth, 25, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.text('PURCHASE ORDER', pageWidth / 2, 15, { align: 'center' });
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.3);
+  doc.line(14, 19, pageWidth - 14, 19);
+
+  // ── Company info box ──
+  doc.setFillColor(245, 248, 255);
+  doc.roundedRect(14, 32, 85, 42, 2, 2, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(15, 37, 110);
+  doc.text('NEW ADIL ELECTRIC CONCERN', 17, 40);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.text('4-B, Jamiat Center, Sha Alam Market', 17, 47);
+  doc.text('Lahore, Pakistan',           17, 52);
+  doc.text('Phone: (042) 123-4567',      17, 57);
+  doc.text('Email: info@adilelectric.com', 17, 62);
+
+  // ── PO info box ──
+  doc.setFillColor(250, 250, 250);
+  doc.roundedRect(pageWidth - 90, 32, 80, 42, 2, 2, 'FD');
+  doc.setDrawColor(200, 200, 200);
+  doc.setFontSize(8);
+  doc.setTextColor(100, 100, 100);
+  doc.text('PO NUMBER', pageWidth - 85, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 37, 110);
+  doc.text(order.poNumber || 'N/A', pageWidth - 17, 42, { align: 'right' });
+
+  doc.setFontSize(8);
+  doc.setTextColor(100, 100, 100);
+  doc.text('PO DATE', pageWidth - 85, 50);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
+  doc.text(order.poDate?.slice(0, 10) || 'N/A', pageWidth - 17, 50, { align: 'right' });
+
+  doc.setFontSize(8);
+  doc.setTextColor(100, 100, 100);
+  doc.text('PO STATUS', pageWidth - 85, 58);
+
+  // Status badge
+  const statusColor = getStatusColor(order.orderStatus);
+  const [r, g, b] = hexToRgb(statusColor);
+  const statusText = (order.orderStatus || 'PENDING').toUpperCase();
+  const statusWidth = Math.max(35, doc.getTextWidth(statusText) + 12);
+  doc.setFillColor(r, g, b);
+  doc.roundedRect(pageWidth - 17 - statusWidth, 56, statusWidth, 8, 2, 2, 'F');
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(pageWidth - 17 - statusWidth, 56, statusWidth, 8, 2, 2, 'D');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(255, 255, 255);
+  doc.text(statusText, pageWidth - 17 - statusWidth / 2, 61, { align: 'center' });
+
+  // ── Vendor & Ship To sections ──
+  const sectionY = 82;
+  const sectionWidth = (pageWidth - 28 - 4) / 2;
+  const sectionGap = 4;
+
+  const drawInfoSection = (x, label, name, phone, email, address) => {
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(x, sectionY, sectionWidth, 38, 2, 2, 'FD');
+    doc.setDrawColor(15, 37, 110);
+    doc.setLineWidth(0.3);
+    doc.line(x, sectionY + 9, x + sectionWidth, sectionY + 9);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 37, 110);
+    doc.text(label, x + 3, sectionY + 7);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.text(name || 'N/A', x + 3, sectionY + 14);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text(`Phone: ${phone || 'N/A'}`,   x + 3, sectionY + 19);
+    doc.text(`Email: ${email || 'N/A'}`,   x + 3, sectionY + 24);
+    doc.text(`Address: ${address || 'N/A'}`, x + 3, sectionY + 29, { maxWidth: sectionWidth - 6 });
+  };
+
+  drawInfoSection(14,                            'VENDOR',   order.vendorName,  order.vendorPhone,  order.vendorEmail,  order.vendorAddress);
+  drawInfoSection(14 + sectionWidth + sectionGap, 'SHIP TO', order.shipToName, order.shipToPhone, order.shipToEmail, order.shipToAddress);
+
+  // ── Items table ──
+  let currentY = drawTableHeader(128);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(0, 0, 0);
+  const baseRowHeight = 10;
+  const minRowHeight  = 8;
+
+  if (order.items?.length > 0) {
+    order.items.forEach((item, index) => {
+      try {
+        const desc = item.itemName || '-';
+        const descLines = doc.splitTextToSize(desc, 40);
+        const descHeight = Math.max(1, descLines.length) * 4;
+        const rowHeight  = Math.max(minRowHeight, descHeight + 4);
+
+        if (currentY + rowHeight + 80 > pageHeight - 30) {
+          doc.addPage();
+          currentY = drawTableHeader(25);
+        }
+
+        const textY = currentY + rowHeight / 2 - 1;
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text(String(index + 1), 18, textY);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.text(item.itemCode || '-', 28, textY);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        const descStartY = currentY + (rowHeight - descLines.length * 4) / 2 + 2;
+        doc.text(descLines, 50, descStartY);
+
+        const brandText = item.brand || item.vendor || item.company || 'N/A';
+        doc.text(brandText, 87, textY);
+
+        doc.setFontSize(8);
+        doc.text(String(item.quantityOrdered || '0'), 115, textY, { align: 'right' });
+        doc.text(`${Number(item.perPiecePrice || 0).toFixed(2)}`, 145, textY, { align: 'right' });
+
+        const total = (Number(item.quantityOrdered || 0) * Number(item.perPiecePrice || 0)).toFixed(2);
+        doc.setFont('helvetica', 'bold');
+        doc.text(total, pageWidth - 17, textY, { align: 'right' });
+
+        currentY += rowHeight + 2;
+
+        if (index < order.items.length - 1) {
+          doc.setDrawColor(230, 230, 230);
+          doc.setLineWidth(0.2);
+          doc.line(14, currentY - 1, pageWidth - 14, currentY - 1);
+        }
+      } catch (error) {
+        console.error('Error rendering item:', item, error);
+        currentY += baseRowHeight;
+      }
+    });
+  } else {
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(9);
+    doc.setTextColor(150, 150, 150);
+    doc.text('No items in this order', 50, currentY);
+    currentY += baseRowHeight;
+  }
+
+  // ── Totals section ──
+  const footerHeight  = 30;
+  const totalsHeight  = 50;
+  let totalsStartY    = pageHeight - footerHeight - totalsHeight - 5;
+
+  if (currentY + 15 > totalsStartY) {
+    doc.addPage();
+    totalsStartY = pageHeight - footerHeight - totalsHeight - 5;
+  }
+
+  const bottomSectionWidth = (pageWidth - 28 - 4) / 2;
+  const bottomSectionGap   = 4;
+
+  // Payment details (left)
+  doc.setFillColor(248, 249, 252);
+  doc.roundedRect(14, totalsStartY, bottomSectionWidth, totalsHeight, 2, 2, 'FD');
+  doc.setDrawColor(220, 220, 220);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 37, 110);
+  doc.text('PAYMENT DETAILS', 17, totalsStartY + 8);
+  doc.setDrawColor(15, 37, 110);
+  doc.setLineWidth(0.3);
+  doc.line(17, totalsStartY + 10, 14 + bottomSectionWidth - 3, totalsStartY + 10);
+
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Payment Terms:', 17, totalsStartY + 18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(order.paymentTerms || 'Net 30', 17, totalsStartY + 25);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+  doc.text('Payment Method:', 17, totalsStartY + 33);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(order.paymentMethod || 'Bank Transfer', 17, totalsStartY + 40);
+
+  // Order totals (right)
+  const totalsBoxX = 14 + bottomSectionWidth + bottomSectionGap;
+  doc.setFillColor(250, 250, 250);
+  doc.roundedRect(totalsBoxX, totalsStartY, bottomSectionWidth, totalsHeight, 2, 2, 'FD');
+  doc.setDrawColor(220, 220, 220);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 37, 110);
+  doc.text('ORDER TOTALS', totalsBoxX + 3, totalsStartY + 8);
+  doc.setDrawColor(15, 37, 110);
+  doc.setLineWidth(0.3);
+  doc.line(totalsBoxX + 3, totalsStartY + 10, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 10);
+
+  const drawTotalRow = (label, value, y) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(70, 70, 70);
+    doc.text(label, totalsBoxX + 3, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(`${value}`, totalsBoxX + bottomSectionWidth - 3, y, { align: 'right' });
+  };
+
+  drawTotalRow('Subtotal:',  Number(order.subtotal       || 0).toFixed(2), totalsStartY + 18);
+  drawTotalRow('Tax:',       Number(order.taxTotal       || 0).toFixed(2), totalsStartY + 25);
+  drawTotalRow('Discount:',  Number(order.discountTotal  || 0).toFixed(2), totalsStartY + 32);
+  drawTotalRow('Shipping:',  Number(order.shippingCharges|| 0).toFixed(2), totalsStartY + 39);
+
+  // Grand total bar
+  const grandTotalY = totalsStartY + totalsHeight + 2;
+  doc.setFillColor(15, 37, 110);
+  doc.roundedRect(14, grandTotalY, pageWidth - 28, 12, 2, 2, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text('GRAND TOTAL:', 17, grandTotalY + 8);
+  doc.text(`${Number(order.grandTotal || 0).toFixed(2)}`, pageWidth - 17, grandTotalY + 8, { align: 'right' });
+
+  // ── Footer on every page ──
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    drawFooter();
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 5, { align: 'right' });
+  }
+
+  doc.save(`PO_${order.poNumber || 'order'}_${new Date().toISOString().slice(0, 10)}.pdf`);
+};
+
+// ─── AddProductDialog Component ───────────────────────────────────────────────
+
+const AddProductDialog = ({ open, onClose, onProductAdded, vendorName, darkMode }) => {
+  const [productForm, setProductForm]   = useState({ ...EMPTY_PRODUCT_FORM });
+  const [imageFile, setImageFile]       = useState(null);
+  const [uploading, setUploading]       = useState(false);
+  const [categories, setCategories]     = useState(() => {
+    const saved = localStorage.getItem('productCategories');
+    return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+  });
+  const [addCatOpen, setAddCatOpen]     = useState(false);
+  const [newCategory, setNewCategory]   = useState('');
+  const [vendors, setVendors]           = useState([]);
+  const [success, setSuccess]           = useState('');
+  const [error, setError]               = useState('');
+
+  // Pre-fill vendor from the parent PO
+  useEffect(() => {
+    if (open && vendorName) {
+      setProductForm((prev) => ({ ...prev, vendor: vendorName }));
+    }
+  }, [open, vendorName]);
+
+  // Reset form on close
+  useEffect(() => {
+    if (!open) {
+      setProductForm({ ...EMPTY_PRODUCT_FORM });
+      setImageFile(null);
+      setSuccess('');
+      setError('');
+    }
+  }, [open]);
+
+  // Fetch vendors + existing product categories
+  useEffect(() => {
+    if (!open) return;
+    const fetchData = async () => {
+      try {
+        const token = localStorage.getItem('token');
+
+        const vendorsRes = await API.get('/vendors', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setVendors(vendorsRes.data);
+
+        const productsRes = await API.get('/products', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const productCategories = Array.from(
+          new Set(productsRes.data.map((p) => p.category).filter(Boolean))
+        );
+
+        const savedCategories   = localStorage.getItem('productCategories');
+        const userAdded         = savedCategories ? JSON.parse(savedCategories) : [];
+        const allCategories     = Array.from(
+          new Set([...DEFAULT_CATEGORIES, ...productCategories, ...userAdded])
+        );
+        setCategories(allCategories);
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setVendors([]);
+      }
+    };
+    fetchData();
+  }, [open]);
+
+  const handleChange = (e) => {
+    setProductForm({ ...productForm, [e.target.name]: e.target.value });
+  };
+
+  const handleImageChange = (e) => {
+    setImageFile(e.target.files[0]);
+  };
+
+  const handleImageUpload = async () => {
+    if (!imageFile) return;
+    setUploading(true);
+    const token     = localStorage.getItem('token');
+    const formData  = new FormData();
+    formData.append('image', imageFile);
+    try {
+      const res = await API.post('/upload', formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      setProductForm((prev) => ({ ...prev, image: res.data.url }));
+      setUploading(false);
+      setError('');
+    } catch {
+      setError('Image upload failed');
+      setUploading(false);
+    }
+  };
+
+  const handleAddCategory = () => {
+    if (newCategory && !categories.includes(newCategory)) {
+      const updated = [...categories, newCategory];
+      setCategories(updated);
+      localStorage.setItem('productCategories', JSON.stringify(updated));
+      setNewCategory('');
+      setAddCatOpen(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (imageFile && !productForm.image) {
+      setError('Please upload the image first before submitting.');
+      return;
+    }
+    try {
+      const token          = localStorage.getItem('token');
+      const piecesPerCarton = Number(productForm.piecesPerCarton) || 0;
+      const costPerPiece    = Number(productForm.costPerPiece) || 0;
+      const sellingPerPiece = Number(productForm.sellingPerPiece) || 0;
+      const sellingPerCarton = piecesPerCarton * sellingPerPiece || 0;
+      const perPieceProfit   = sellingPerPiece - costPerPiece;
+      const skuValue         = String(productForm.SKU || '').trim() || generateSKU(productForm.name);
+
+      const res = await API.post(
+        '/products',
+        {
+          name:            productForm.name,
+          category:        productForm.category,
+          subCategory:     productForm.subCategory,
+          brand:           productForm.brand,
+          vendor:          productForm.vendor,
+          color:           productForm.color,
+          costPerPiece,
+          costPerCarton:   0,
+          sellingPerPiece,
+          sellingPerCarton,
+          cartonQuantity:  0,
+          piecesPerCarton,
+          losePieces:      0,
+          stockQuantity:   0,
+          totalPieces:     0,
+          perPieceProfit,
+          totalUnitProfit: 0,
+          totalUnitCost:   0,
+          SKU:             skuValue,
+          image:           productForm.image,
+          warrantyMonths:  Number(productForm.warrantyMonths) || 12,
+          warehouseAddress: productForm.warehouseAddress,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const createdProduct = res.data;
+      setSuccess(`Product "${productForm.name}" added with zero stock! SKU: ${skuValue}`);
+      setError('');
+
+      if (onProductAdded) onProductAdded(createdProduct || { ...productForm, SKU: skuValue });
+
+      // Auto-close after brief success display
+      setTimeout(() => onClose(), 1800);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to add product. Please try again.');
+      setSuccess('');
+    }
+  };
+
+  // ── Shared styles ──
+  const fieldSx = { '& .MuiOutlinedInput-root': { borderRadius: 2 } };
+
+  const sectionCardSx = {
+    mb: 2,
+    borderRadius: 2,
+    boxShadow: darkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.06)',
+    background: darkMode ? 'rgba(40,40,40,0.85)' : '#fafafa',
+    border:     darkMode ? '1px solid rgba(255,255,255,0.07)' : '1px solid rgba(0,0,0,0.06)',
+  };
+
+  return (
+    <Box>
+      {/* ── Main Add Product Dialog ── */}
+      <Dialog
+        open={open}
+        onClose={onClose}
+        maxWidth="md"
+        fullWidth
+        scroll="paper"
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            background: darkMode ? 'rgba(24,24,24,0.98)' : '#fff',
+            boxShadow: darkMode
+              ? '0 24px 64px rgba(0,0,0,0.7)'
+              : '0 24px 64px rgba(0,0,0,0.15)',
+          },
+        }}
+      >
+        {/* Title */}
+        <DialogTitle
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            pb: 1,
+            borderBottom: darkMode
+              ? '1px solid rgba(255,255,255,0.08)'
+              : '1px solid rgba(0,0,0,0.08)',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Avatar sx={{ bgcolor: 'primary.main', width: 44, height: 44 }}>
+              <InventoryIcon />
+            </Avatar>
+            <Box>
+              <Typography variant="h6" fontWeight={700}>
+                Add New Product
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Fill in the details — the product will be saved and auto-filled into your order
+              </Typography>
+            </Box>
+          </Box>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+
+        {/* Content */}
+        <DialogContent sx={{ pt: 2 }}>
+          {vendorName && (
+            <Alert
+              severity="info"
+              icon={<StorefrontIcon fontSize="inherit" />}
+              sx={{ mb: 2, borderRadius: 2 }}
+            >
+              Vendor pre-filled as <strong>{vendorName}</strong> from your purchase order.
+            </Alert>
+          )}
+
+          {success && (
+            <Alert
+              severity="success"
+              icon={<CheckCircleOutlineIcon fontSize="inherit" />}
+              sx={{ mb: 2, borderRadius: 2 }}
+            >
+              {success}
+            </Alert>
+          )}
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          <form id="add-product-dialog-form" onSubmit={handleSubmit}>
+            <Grid container spacing={2}>
+
+              {/* Product Details */}
+              <Grid item xs={12}>
+                <Card sx={sectionCardSx}>
+                  <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <InventoryIcon color={darkMode ? 'secondary' : 'primary'} sx={{ mr: 1 }} />
+                      <Typography variant="subtitle1" fontWeight={600}>
+                        Product Details
+                      </Typography>
+                    </Box>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Product Name"
+                          name="name"
+                          fullWidth
+                          value={productForm.name}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <InventoryIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          select
+                          label="Category"
+                          name="category"
+                          fullWidth
+                          value={productForm.category}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <CategoryIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        >
+                          {categories.map((cat) => (
+                            <MenuItem key={cat} value={cat}>{cat}</MenuItem>
+                          ))}
+                          <MenuItem value="add-category" onClick={() => setAddCatOpen(true)}>
+                            <strong>+ Add Category</strong>
+                          </MenuItem>
+                        </TextField>
+                      </Grid>
+
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Sub-Category"
+                          name="subCategory"
+                          fullWidth
+                          value={productForm.subCategory}
+                          onChange={handleChange}
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <AccountTreeIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Brand / Company"
+                          name="brand"
+                          fullWidth
+                          value={productForm.brand}
+                          onChange={handleChange}
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <BrandingWatermarkIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          select
+                          label="Vendor"
+                          name="vendor"
+                          fullWidth
+                          value={productForm.vendor}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <StorefrontIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        >
+                          {vendors.map((v) => (
+                            <MenuItem key={v._id} value={v.vendorName}>
+                              {v.vendorName}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </Grid>
+
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Color"
+                          name="color"
+                          fullWidth
+                          value={productForm.color}
+                          onChange={handleChange}
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <ColorLensIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Pricing & Stock */}
+              <Grid item xs={12}>
+                <Card sx={sectionCardSx}>
+                  <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <AttachFileIcon color={darkMode ? 'secondary' : 'primary'} sx={{ mr: 1 }} />
+                      <Typography variant="subtitle1" fontWeight={600}>
+                        Pricing & Stock
+                      </Typography>
+                    </Box>
+                    <Alert severity="info" sx={{ mb: 2, borderRadius: 2, py: 0.5 }}>
+                      Product will be saved with <strong>zero stock</strong>. Carton Qty &amp; Lose
+                      Pieces are entered in the Items section below — stock updates automatically
+                      when order status is set to <strong>Received</strong>.
+                    </Alert>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="Cost Per Piece"
+                          name="costPerPiece"
+                          type="number"
+                          fullWidth
+                          value={productForm.costPerPiece}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{ startAdornment: <InputAdornment position="start">Rs</InputAdornment> }}
+                          inputProps={{
+                            min: 0,
+                            sx: {
+                              '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+                              '&[type=number]': { MozAppearance: 'textfield' },
+                            },
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="Selling Per Piece"
+                          name="sellingPerPiece"
+                          type="number"
+                          fullWidth
+                          value={productForm.sellingPerPiece}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{ startAdornment: <InputAdornment position="start">Rs</InputAdornment> }}
+                          inputProps={{
+                            min: 0,
+                            sx: {
+                              '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+                              '&[type=number]': { MozAppearance: 'textfield' },
+                            },
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="Pieces Per Carton"
+                          name="piecesPerCarton"
+                          type="number"
+                          fullWidth
+                          value={productForm.piecesPerCarton}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          inputProps={{
+                            min: 0,
+                            sx: {
+                              '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+                              '&[type=number]': { MozAppearance: 'textfield' },
+                            },
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="Warranty (months)"
+                          name="warrantyMonths"
+                          type="number"
+                          fullWidth
+                          value={productForm.warrantyMonths}
+                          onChange={handleChange}
+                          helperText="Default: 12 months"
+                          variant="outlined"
+                          inputProps={{
+                            min: 0,
+                            sx: {
+                              '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+                              '&[type=number]': { MozAppearance: 'textfield' },
+                            },
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="SKU / Barcode"
+                          name="SKU"
+                          fullWidth
+                          value={productForm.SKU}
+                          onChange={handleChange}
+                          required
+                          variant="outlined"
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <QrCodeIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                          sx={fieldSx}
+                        />
+                      </Grid>
+
+                      <Grid item xs={12} md={4}>
+                        <TextField
+                          label="Warehouse Address"
+                          name="warehouseAddress"
+                          fullWidth
+                          value={productForm.warehouseAddress}
+                          onChange={handleChange}
+                          variant="outlined"
+                          placeholder="Enter warehouse address"
+                          sx={fieldSx}
+                        />
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Product Image */}
+              <Grid item xs={12}>
+                <Card sx={sectionCardSx}>
+                  <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <AttachFileIcon color={darkMode ? 'secondary' : 'primary'} sx={{ mr: 1 }} />
+                      <Typography variant="subtitle1" fontWeight={600}>
+                        Product Image
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                        (optional)
+                      </Typography>
+                    </Box>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems="center">
+                      <Button
+                        variant="outlined"
+                        component="label"
+                        startIcon={<AttachFileIcon />}
+                        sx={{ borderRadius: 2, py: 1.5, flex: 1, minWidth: 160 }}
+                      >
+                        {imageFile ? imageFile.name : 'Select Image'}
+                        <input type="file" accept="image/*" hidden onChange={handleImageChange} />
+                      </Button>
+
+                      {imageFile && (
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          onClick={handleImageUpload}
+                          disabled={uploading}
+                          sx={{ borderRadius: 2, py: 1.5, minWidth: 110 }}
+                        >
+                          {uploading ? <CircularProgress size={20} color="inherit" /> : 'Upload'}
+                        </Button>
+                      )}
+
+                      {productForm.image && (
+                        <Chip label="Uploaded ✓" color="success" variant="outlined" size="small" />
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+            </Grid>
+          </form>
+        </DialogContent>
+
+        {/* Actions */}
+        <DialogActions
+          sx={{
+            px: 3,
+            py: 2,
+            borderTop: darkMode
+              ? '1px solid rgba(255,255,255,0.08)'
+              : '1px solid rgba(0,0,0,0.08)',
+            gap: 1,
+          }}
+        >
+          <Button onClick={onClose} variant="outlined" color="inherit" sx={{ borderRadius: 2 }}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="add-product-dialog-form"
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            sx={{
+              borderRadius: 2,
+              fontWeight: 700,
+              background: darkMode
+                ? 'linear-gradient(45deg, #90caf9, #64b5f6)'
+                : 'linear-gradient(45deg, #1976d2, #42a5f5)',
+              '&:hover': {
+                background: darkMode
+                  ? 'linear-gradient(45deg, #64b5f6, #42a5f5)'
+                  : 'linear-gradient(45deg, #1565c0, #2196f3)',
+              },
+            }}
+          >
+            Add Product
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Nested: Add Category Dialog ── */}
+      <Dialog open={addCatOpen} onClose={() => setAddCatOpen(false)}>
+        <DialogTitle>Add New Category</DialogTitle>
+        <DialogContent>
+          <TextField
+            label="Category Name"
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            fullWidth
+            autoFocus
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddCatOpen(false)}>Cancel</Button>
+          <Button onClick={handleAddCategory} variant="contained" color="primary">
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+// ─── AdminPurchaseReport Component ───────────────────────────────────────────
 
 const AdminPurchaseReport = () => {
   const { darkMode } = useDarkMode();
-  const [currentDate] = useState(new Date());
-  const [orders, setOrders] = useState([]);
+  const theme        = useTheme();
+  const isSm         = useMediaQuery(theme.breakpoints.down('sm'));
+  const isMd         = useMediaQuery(theme.breakpoints.down('md'));
+
+  // ── State ──
+  const [currentDate]    = useState(new Date());
+  const [orders, setOrders]               = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
-  const [page, setPage] = useState(0);
-  const rowsPerPage = 10;
-  // Highlight handling via URL param
-  const [highlightPo, setHighlightPo] = useState('');
+  const [page, setPage]                   = useState(0);
+  const [vendors, setVendors]             = useState([]);
+  const [products, setProducts]           = useState([]);
+  const [search, setSearch]               = useState('');
+  const [vendorFilter, setVendorFilter]   = useState('');
+  const [statusFilter, setStatusFilter]   = useState('');
+  const [startDate, setStartDate]         = useState('');
+  const [endDate, setEndDate]             = useState('');
+
+  const [editOpen, setEditOpen]                   = useState(false);
+  const [editOrder, setEditOrder]                 = useState(null);
+  const [originalItemCount, setOriginalItemCount] = useState(0);
+  const [showCashAmount, setShowCashAmount]       = useState(false);
+  const [showNetDueDate, setShowNetDueDate]       = useState(false);
+  const [netDueDate, setNetDueDate]               = useState('');
+  const [remainingDays, setRemainingDays]         = useState(0);
+
+  // Highlight a PO row via URL ?highlight= param
+  const [highlightPo, setHighlightPo]       = useState('');
   const [highlightUntil, setHighlightUntil] = useState(0);
   const rowRefs = useRef({});
 
+  // Add Product dialog
+  const [addProductDialogOpen, setAddProductDialogOpen] = useState(false);
+  const [addProductTargetIdx, setAddProductTargetIdx]   = useState(null);
+
+  // ── Helpers ──
+
+  /** Returns true when total payments are less than grand total. */
+  const arePaymentsInsufficient = () => {
+    if (!editOrder?.grandTotal) return false;
+    const totalPaid =
+      Number(editOrder.advanceAmount  || 0) +
+      Number(editOrder.initialPayment || 0) +
+      Number(editOrder.finalPayment   || 0) +
+      Number(editOrder.cashPaid       || 0);
+    return totalPaid < Number(editOrder.grandTotal);
+  };
+
+  // ── Shared cell styles ──
+  const cellSx = {
+    maxWidth:      { xs: 80, sm: 120, md: 160, lg: 240 },
+    overflow:      'hidden',
+    textOverflow:  'ellipsis',
+    whiteSpace:    'nowrap',
+    fontSize:      { xs: '0.75rem', sm: '0.875rem' },
+    padding:       { xs: '6px 8px', sm: '12px 16px' },
+  };
+
+  const headerCellSx = {
+    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+    padding:  { xs: '8px 6px', sm: '12px 16px' },
+  };
+
+  // ─── Effects ─────────────────────────────────────────────────────────────
+
+  // Read ?highlight= param from URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const h = params.get('highlight');
+    const h      = params.get('highlight');
     if (h) {
       setHighlightPo(h);
-      setHighlightUntil(Date.now() + 6000); // blink for 6s
-      // remove the param from URL without reloading
+      setHighlightUntil(Date.now() + 6000);
       const url = new URL(window.location.href);
       url.searchParams.delete('highlight');
       window.history.replaceState({}, '', url.toString());
     }
   }, []);
 
-  // When orders are loaded and a highlight PO exists, move to the correct page and scroll into view
+  // Scroll highlighted row into view
   useEffect(() => {
-    if (!highlightPo || !orders || orders.length === 0) return;
-    const idx = orders.findIndex(o => o.poNumber === highlightPo);
+    if (!highlightPo || !orders?.length) return;
+    const idx        = orders.findIndex((o) => o.poNumber === highlightPo);
     if (idx === -1) return;
-    const targetPage = Math.floor(idx / rowsPerPage);
+    const targetPage = Math.floor(idx / ROWS_PER_PAGE);
     if (page !== targetPage) {
       setPage(targetPage);
-      // delay to allow table to render new page
       setTimeout(() => {
-        const el = rowRefs.current[highlightPo];
-        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        rowRefs.current[highlightPo]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 100);
     } else {
-      const el = rowRefs.current[highlightPo];
-      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      rowRefs.current[highlightPo]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [orders, highlightPo, page]);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editOrder, setEditOrder] = useState(null);
-  const [showCashAmount, setShowCashAmount] = useState(false);
-  const [showNetDueDate, setShowNetDueDate] = useState(false);
-  const [netDueDate, setNetDueDate] = useState('');
-  const [remainingDays, setRemainingDays] = useState(0);
-  const [search, setSearch] = useState('');
-  const [vendors, setVendors] = useState([]);
-  const [vendorFilter, setVendorFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  
-
-  // Responsive helpers
-  const theme = useTheme();
-  const isSm = useMediaQuery(theme.breakpoints.down('sm'));
-  const isMd = useMediaQuery(theme.breakpoints.down('md'));
-  const cellSx = {
-    maxWidth: isSm ? 120 : isMd ? 160 : 240,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  };
-  const defaultUOM = ['pieces', 'boxes', 'kg', 'liters'];
-  const defaultStatus = ['Pending', 'Approved', 'Received', 'Partially Received', 'Cancelled'];
-  const paymentTermsOptions = ['Net 30', 'Net 60', 'COD', 'Advance Payment', 'Partial Payment', 'Cash Payment'];
-  const paymentMethodOptions = ['Bank Transfer', 'Cheque', 'Cash Payment'];
-  const defaultDeliveryMethods = ['Courier', 'In-house transport'];
-  const defaultPurchaseTypes = ['Local', 'International'];
-  const defaultCurrency = ['PKR', 'DOLLAR', 'YAN'];
-
-  // Calculate due date and remaining days for Net payment terms
-  const calculateNetDueDate = (paymentTerms, poDate) => {
-    if (!paymentTerms || !poDate || !['Net 30', 'Net 60'].includes(paymentTerms)) {
-      setShowNetDueDate(false);
-      return;
-    }
-    
-    const dueDate = new Date(poDate);
-    const daysToAdd = paymentTerms === 'Net 30' ? 30 : 60;
-    dueDate.setDate(dueDate.getDate() + daysToAdd);
-    
-    // Format date as YYYY-MM-DD
-    const formattedDate = dueDate.toISOString().split('T')[0];
-    setNetDueDate(formattedDate);
-    
-    // Calculate remaining days
-    const today = new Date();
-    const diffTime = dueDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    setRemainingDays(diffDays);
-    
-    setShowNetDueDate(true);
-  };
-
-  // Check if cash amount should be shown based on payment terms and due date
-  const checkShowCashAmount = (paymentTerms, poDate) => {
-    if (!paymentTerms || !poDate) return false;
-    
-    const dueDate = new Date(poDate);
-    
-    if (paymentTerms === 'Net 30') {
-      dueDate.setDate(dueDate.getDate() + 30);
-    } else if (paymentTerms === 'Net 60') {
-      dueDate.setDate(dueDate.getDate() + 60);
-    } else {
-      setShowNetDueDate(false);
-      return false;
-    }
-    
-    const isPastDue = currentDate >= dueDate;
-    calculateNetDueDate(paymentTerms, poDate);
-    return isPastDue;
-  };
-
-  // Update payment-related states when editOrder changes
-  useEffect(() => {
-    if (editOrder) {
-      const showCash = checkShowCashAmount(editOrder.paymentTerms, editOrder.poDate);
-      setShowCashAmount(showCash);
-      
-      if (['Net 30', 'Net 60'].includes(editOrder.paymentTerms) && editOrder.poDate) {
-        calculateNetDueDate(editOrder.paymentTerms, editOrder.poDate);
-      }
-    }
-  }, [editOrder]);
-  // Delete PO
-  const handleDelete = async (orderId) => {
-    if (window.confirm('Are you sure you want to delete this Purchase Order?')) {
-      await API.delete(`/purchase-orders/${orderId}`);
-      setOrders(orders.filter(o => o._id !== orderId));
-      setFilteredOrders(filteredOrders.filter(o => o._id !== orderId));
-    }
-  };
 
   // Fetch vendors
   useEffect(() => {
     const token = localStorage.getItem('token');
-    API.get('/vendors', {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(res => setVendors(res.data)).catch(() => setVendors([]));
+    API.get('/vendors', { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => setVendors(res.data))
+      .catch(() => setVendors([]));
   }, []);
 
-  // Fetch purchase orders (list), then hydrate with full details per PO
+  // Fetch purchase orders and products
   useEffect(() => {
     const fetchOrders = async () => {
       try {
-        const res = await API.get('/purchase-orders');
-        const list = Array.isArray(res.data) ? res.data : [];
-        setOrders(list);
-        setFilteredOrders(list);
+        const res    = await API.get('/purchase-orders');
+        const list   = Array.isArray(res.data) ? res.data : [];
+        const sorted = sortByMostRecent(list);
+        setOrders(sorted);
+        setFilteredOrders(sorted);
 
-        // Fetch full details for each PO to populate all table cells
+        // Fetch products for SKU dropdown
+        try {
+          const productsRes = await API.get('/products');
+          setProducts(Array.isArray(productsRes.data) ? productsRes.data : []);
+        } catch (err) {
+          console.error('Error fetching products:', err);
+          setProducts([]);
+        }
+
+        // Hydrate each order with full detail
         const detailed = await Promise.all(
           list.map(async (o) => {
             try {
@@ -179,11 +1264,10 @@ const AdminPurchaseReport = () => {
             }
           })
         );
-
-        setOrders(detailed);
-        setFilteredOrders(detailed);
-      } catch (e) {
-        // Keep empty/default state on error
+        const sortedDetailed = sortByMostRecent(detailed);
+        setOrders(sortedDetailed);
+        setFilteredOrders(sortedDetailed);
+      } catch {
         setOrders([]);
         setFilteredOrders([]);
       }
@@ -191,1856 +1275,1859 @@ const AdminPurchaseReport = () => {
     fetchOrders();
   }, []);
 
+  // Recalculate payment visibility when editOrder changes
   useEffect(() => {
-    // Apply combined filters: text search, vendor, status, start/end date
+    if (editOrder) {
+      const showCash = checkShowCashAmount(editOrder.paymentTerms, editOrder.poDate);
+      setShowCashAmount(showCash);
+      if (['Net 30', 'Net 60'].includes(editOrder.paymentTerms) && editOrder.poDate) {
+        calculateNetDueDate(editOrder.paymentTerms, editOrder.poDate);
+      }
+    }
+  }, [editOrder]);
+
+  // Filter orders whenever filter state changes
+  useEffect(() => {
     let f = Array.isArray(orders) ? [...orders] : [];
 
-    // Text search across PO number, vendor name, status, and date string
     if (search) {
       const q = search.toLowerCase();
-      f = f.filter(order => (
-        (order.poNumber || '').toLowerCase().includes(q) ||
-        (order.vendorName || '').toLowerCase().includes(q) ||
-        (order.orderStatus || '').toLowerCase().includes(q) ||
-        (order.poDate || '').toLowerCase().includes(q)
-      ));
+      f = f.filter(
+        (o) =>
+          (o.poNumber    || '').toLowerCase().includes(q) ||
+          (o.vendorName  || '').toLowerCase().includes(q) ||
+          (o.orderStatus || '').toLowerCase().includes(q) ||
+          (o.poDate      || '').toLowerCase().includes(q)
+      );
     }
+    if (vendorFilter) f = f.filter((o) => (o.vendorName  || '').toLowerCase() === vendorFilter.toLowerCase());
+    if (statusFilter) f = f.filter((o) => (o.orderStatus || '').toLowerCase() === statusFilter.toLowerCase());
+    if (startDate)    f = f.filter((o) => o.poDate && new Date(o.poDate) >= new Date(startDate + 'T00:00:00'));
+    if (endDate)      f = f.filter((o) => o.poDate && new Date(o.poDate) <= new Date(endDate   + 'T23:59:59'));
 
-    // Vendor filter
-    if (vendorFilter) {
-      f = f.filter(o => (o.vendorName || '').toLowerCase() === vendorFilter.toLowerCase());
-    }
-
-    // Status filter
-    if (statusFilter) {
-      f = f.filter(o => (o.orderStatus || '').toLowerCase() === statusFilter.toLowerCase());
-    }
-
-    // Date range filters (inclusive)
-    if (startDate) {
-      f = f.filter(o => {
-        if (!o.poDate) return false;
-        const created = new Date(o.poDate);
-        return created >= new Date(startDate + 'T00:00:00');
-      });
-    }
-    if (endDate) {
-      f = f.filter(o => {
-        if (!o.poDate) return false;
-        const created = new Date(o.poDate);
-        return created <= new Date(endDate + 'T23:59:59');
-      });
-    }
-
-    setFilteredOrders(f);
+    setFilteredOrders(sortByMostRecent(f));
     setPage(0);
   }, [search, orders, vendorFilter, statusFilter, startDate, endDate]);
 
-  // Helper function to format datetime for datetime-local input
-  const formatDateTimeForInput = (dateTime) => {
-    if (!dateTime) return '';
-    try {
-      const date = new Date(dateTime);
-      // Convert to local datetime string format YYYY-MM-DDTHH:MM
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
-    } catch {
-      return '';
+  // ─── Calculations ─────────────────────────────────────────────────────────
+
+  const calculateNetDueDate = (paymentTerms, poDate) => {
+    if (!paymentTerms || !poDate || !['Net 30', 'Net 60'].includes(paymentTerms)) {
+      setShowNetDueDate(false);
+      return;
     }
+    const dueDate = new Date(poDate);
+    dueDate.setDate(dueDate.getDate() + (paymentTerms === 'Net 30' ? 30 : 60));
+    setNetDueDate(dueDate.toISOString().split('T')[0]);
+    setRemainingDays(Math.ceil((dueDate - new Date()) / (1000 * 60 * 60 * 24)));
+    setShowNetDueDate(true);
   };
 
-  const handleEdit = async order => {
-    try {
-      // Fetch the full PO data with all fields
-      const response = await API.get(`/purchase-orders/${order._id}`);
-      const fullOrder = response.data;
-      
-      // Ensure all required fields are present with default values if missing
-      const updatedOrder = {
-        ...fullOrder,
-        poDate: fullOrder.poDate ? fullOrder.poDate.split('T')[0] : new Date().toISOString().split('T')[0],
-        expectedDeliveryDate: fullOrder.expectedDeliveryDate ? fullOrder.expectedDeliveryDate.split('T')[0] : '',
-        orderStatus: fullOrder.orderStatus || 'Pending',
-        paymentStatus: fullOrder.paymentStatus || 'Unpaid',
-        paymentTerms: fullOrder.paymentTerms || 'Net 30',
-        paymentMethod: fullOrder.paymentMethod || 'Bank Transfer',
-        purchaseType: fullOrder.purchaseType || 'Local',
-        currency: fullOrder.currency || 'PKR',
-        items: fullOrder.items?.map(item => ({
+  const checkShowCashAmount = (paymentTerms, poDate) => {
+    if (!paymentTerms || !poDate) return false;
+    const dueDate = new Date(poDate);
+    if      (paymentTerms === 'Net 30') dueDate.setDate(dueDate.getDate() + 30);
+    else if (paymentTerms === 'Net 60') dueDate.setDate(dueDate.getDate() + 60);
+    else { setShowNetDueDate(false); return false; }
+    calculateNetDueDate(paymentTerms, poDate);
+    return currentDate >= dueDate;
+  };
+
+  const calculateDialogTotals = () => {
+    let subtotal = 0, taxTotal = 0, discountTotal = 0;
+    editOrder?.items?.forEach((item) => {
+      subtotal      += Number(item.unitPrice) || 0;
+      taxTotal      += Number(item.tax)       || 0;
+      discountTotal += Number(item.discount)  || 0;
+    });
+    const shipping = Number(editOrder?.shippingCharges) || 0;
+    return { subtotal, taxTotal, discountTotal, grandTotal: subtotal + taxTotal - discountTotal + shipping };
+  };
+
+  // ─── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleDelete = async (orderId) => {
+    if (!window.confirm('Are you sure you want to delete this Purchase Order?')) return;
+    await API.delete(`/purchase-orders/${orderId}`);
+    setOrders((prev)         => prev.filter((o) => o._id !== orderId));
+    setFilteredOrders((prev) => prev.filter((o) => o._id !== orderId));
+  };
+
+  const handleEdit = (order) => {
+    const fullOrder = order;
+    setEditOrder({
+      ...fullOrder,
+      poDate:               fullOrder.poDate               ? fullOrder.poDate.split('T')[0]               : new Date().toISOString().split('T')[0],
+      expectedDeliveryDate: fullOrder.expectedDeliveryDate ? fullOrder.expectedDeliveryDate.split('T')[0] : '',
+      orderStatus:          fullOrder.orderStatus   || 'Pending',
+      paymentStatus:        fullOrder.paymentStatus || 'Unpaid',
+      paymentTerms:         fullOrder.paymentTerms  || 'Net 30',
+      paymentMethod:        fullOrder.paymentMethod || 'Bank Transfer',
+      purchaseType:         fullOrder.purchaseType  || 'Local',
+      currency:             fullOrder.currency      || 'PKR',
+      items: fullOrder.items?.map((item) => {
+        const product = products.find((p) => p.SKU === item.itemCode);
+        return {
           ...item,
+          itemSource:      item.itemSource  || 'AdminProductList',
+          cartonQuantity:  item.cartonQuantity  ?? '',
+          piecesPerCarton: product?.piecesPerCarton ?? item.piecesPerCarton ?? '',
+          losePieces:      item.losePieces  ?? '',
           quantityOrdered: item.quantityOrdered || 0,
-          perPiecePrice: item.perPiecePrice || 0,
-          unitPrice: item.unitPrice || 0,
-          tax: item.tax || 0,
-          discount: item.discount || 0,
-          uom: item.uom || 'pieces'
-        })) || [],
-        vendorName: fullOrder.vendorName || '',
-        vendorId: fullOrder.vendorId || '',
-        vendorAddress: fullOrder.vendorAddress || '',
-        vendorPhone: fullOrder.vendorPhone || '',
-        vendorEmail: fullOrder.vendorEmail || '',
-        shipToName: fullOrder.shipToName || '',
-        shipToPhone: fullOrder.shipToPhone || '',
-        shipToEmail: fullOrder.shipToEmail || '',
-        shipToAddress: fullOrder.shipToAddress || '',
-        deliveryMethod: fullOrder.deliveryMethod || '',
-        deliveryLocation: fullOrder.deliveryLocation || '',
-        reference: fullOrder.reference || '',
-        subtotal: fullOrder.subtotal || 0,
-        taxTotal: fullOrder.taxTotal || 0,
-        discountTotal: fullOrder.discountTotal || 0,
-        shippingCharges: fullOrder.shippingCharges || 0,
-        grandTotal: fullOrder.grandTotal || 0,
-        advanceAmount: fullOrder.advanceAmount || 0,
-        advanceDateTime: formatDateTimeForInput(fullOrder.advancePaymentDateTime || fullOrder.advanceDateTime),
-        initialPayment: fullOrder.initialPayment || 0,
-        initialPaymentDateTime: formatDateTimeForInput(fullOrder.initialPaymentDateTime),
-        finalPayment: fullOrder.finalPayment || 0,
-        finalPaymentDateTime: formatDateTimeForInput(fullOrder.finalPaymentDateTime),
-        cashPaid: fullOrder.cashPaid || 0,
-        cashPaymentDateTime: formatDateTimeForInput(fullOrder.cashPaymentDateTime),
-        attachments: fullOrder.attachments || []
-      };
-      
-      setEditOrder(updatedOrder);
-      setEditOpen(true);
-    } catch (error) {
-      console.error('Error fetching PO details:', error);
-      // Fallback to the original order data if API call fails
-      setEditOrder({
-        ...order,
-        poDate: order.poDate ? order.poDate.split('T')[0] : new Date().toISOString().split('T')[0],
-        expectedDeliveryDate: order.expectedDeliveryDate ? order.expectedDeliveryDate.split('T')[0] : ''
-      });
-      setEditOpen(true);
+          perPiecePrice:   item.perPiecePrice   || 0,
+          unitPrice:       item.unitPrice        || 0,
+          tax:             item.tax              || 0,
+          discount:        item.discount         || 0,
+          uom:             item.uom              || 'pieces',
+          description:     item.description      || '',
+        };
+      }) || [],
+      vendorName:       fullOrder.vendorName    || '',
+      vendorId:         fullOrder.vendorId      || '',
+      vendorAddress:    fullOrder.vendorAddress || '',
+      vendorPhone:      fullOrder.vendorPhone   || '',
+      vendorEmail:      fullOrder.vendorEmail   || '',
+      shipToName:       fullOrder.shipToName    || '',
+      shipToPhone:      fullOrder.shipToPhone   || '',
+      shipToEmail:      fullOrder.shipToEmail   || '',
+      shipToAddress:    fullOrder.shipToAddress || '',
+      deliveryMethod:   fullOrder.deliveryMethod  || '',
+      deliveryLocation: fullOrder.deliveryLocation || '',
+      reference:        fullOrder.reference        || '',
+      subtotal:         fullOrder.subtotal         || 0,
+      taxTotal:         fullOrder.taxTotal         || 0,
+      discountTotal:    fullOrder.discountTotal    || 0,
+      shippingCharges:  fullOrder.shippingCharges  || 0,
+      grandTotal:       fullOrder.grandTotal       || 0,
+      advanceAmount:    fullOrder.advanceAmount    || 0,
+      advanceDateTime:  formatDateTimeForInput(fullOrder.advancePaymentDateTime || fullOrder.advanceDateTime),
+      initialPayment:   fullOrder.initialPayment   || 0,
+      initialPaymentDateTime: formatDateTimeForInput(fullOrder.initialPaymentDateTime),
+      finalPayment:     fullOrder.finalPayment     || 0,
+      finalPaymentDateTime: formatDateTimeForInput(fullOrder.finalPaymentDateTime),
+      cashPaid:         fullOrder.cashPaid         || 0,
+      cashPaymentDateTime: formatDateTimeForInput(fullOrder.cashPaymentDateTime),
+      attachments:      fullOrder.attachments      || [],
+      creditAmount:     fullOrder.creditAmount     || 0,
+      advanceApprovedBy: fullOrder.advanceApprovedBy || '',
+    });
+
+    // Pre-calculate remaining payment if missing
+    if (!fullOrder.remainingPayment && fullOrder.grandTotal) {
+      const totalPaid =
+        Number(fullOrder.advanceAmount  || 0) +
+        Number(fullOrder.initialPayment || 0) +
+        Number(fullOrder.finalPayment   || 0);
+      const remaining = Math.max(0, Number(fullOrder.grandTotal) - totalPaid);
+      setEditOrder((prev) => ({ ...prev, remainingPayment: remaining.toFixed(2) }));
     }
+
+    setOriginalItemCount(fullOrder.items?.length || 0);
+    setEditOpen(true);
   };
 
-  const handleEditChange = e => {
-    const { name, value } = e.target;
-    const updatedOrder = { ...editOrder, [name]: value };
+  const handleEditChange = (e) => {
+    const { name, value }   = e.target;
+    const updatedOrder      = { ...editOrder, [name]: value };
 
-    // Handle items array updates and recalculate totals
+    // Recalculate totals when items change
     if (name === 'items') {
       const items = value;
       let subtotal = 0, taxTotal = 0, discountTotal = 0;
-      
-      items.forEach(item => {
-        const qty = Number(item.quantityOrdered) || 0;
-        const perPiece = Number(item.perPiecePrice) || 0;
-        const itemSubtotal = qty * perPiece;
-        
-        item.unitPrice = itemSubtotal.toFixed(2);
-        
-        subtotal += itemSubtotal;
-        taxTotal += Number(item.tax) || 0;
+      items.forEach((item) => {
+        const qty           = Number(item.quantityOrdered) || 0;
+        const perPiece      = Number(item.perPiecePrice)   || 0;
+        const itemSubtotal  = qty * perPiece;
+        item.unitPrice      = itemSubtotal.toFixed(2);
+        subtotal      += itemSubtotal;
+        taxTotal      += Number(item.tax)      || 0;
         discountTotal += Number(item.discount) || 0;
       });
-      
-      const shipping = Number(updatedOrder.shippingCharges) || 0;
-      const grandTotal = subtotal + taxTotal - discountTotal + shipping;
-      
-      updatedOrder.items = items;
-      updatedOrder.subtotal = subtotal.toFixed(2);
-      updatedOrder.taxTotal = taxTotal.toFixed(2);
-      updatedOrder.discountTotal = discountTotal.toFixed(2);
-      updatedOrder.grandTotal = grandTotal.toFixed(2);
+      const shipping          = Number(updatedOrder.shippingCharges) || 0;
+      updatedOrder.items          = items;
+      updatedOrder.subtotal       = subtotal.toFixed(2);
+      updatedOrder.taxTotal       = taxTotal.toFixed(2);
+      updatedOrder.discountTotal  = discountTotal.toFixed(2);
+      updatedOrder.grandTotal     = (subtotal + taxTotal - discountTotal + shipping).toFixed(2);
     }
 
-    // Calculate remaining payment when payments change
-    if (['advanceAmount', 'initialPayment', 'finalPayment', 'paymentTerms', 'grandTotal'].includes(name)) {
-      const grandTotal = Number(updatedOrder.grandTotal || 0);
-      const advanceAmount = name === 'advanceAmount' ? Number(value || 0) : Number(editOrder.advanceAmount || 0);
+    // Recalculate remaining payment & auto-set payment status
+    if (['advanceAmount', 'initialPayment', 'finalPayment', 'cashPaid', 'paymentTerms', 'grandTotal', 'items'].includes(name)) {
+      const grandTotal     = Number(updatedOrder.grandTotal || 0);
+      const advanceAmount  = name === 'advanceAmount'  ? Number(value || 0) : Number(editOrder.advanceAmount  || 0);
       const initialPayment = name === 'initialPayment' ? Number(value || 0) : Number(editOrder.initialPayment || 0);
-      const finalPayment = name === 'finalPayment' ? Number(value || 0) : Number(editOrder.finalPayment || 0);
-      
-      // Calculate total paid and remaining payment
-      const totalPaid = advanceAmount + initialPayment + finalPayment;
-      const remainingPayment = Math.max(0, grandTotal - totalPaid);
-      
-      updatedOrder.remainingPayment = remainingPayment.toFixed(2);
+      const finalPayment   = name === 'finalPayment'   ? Number(value || 0) : Number(editOrder.finalPayment   || 0);
+      const cashPaid       = name === 'cashPaid'       ? Number(value || 0) : Number(editOrder.cashPaid       || 0);
+      const totalPaid      = advanceAmount + initialPayment + finalPayment + cashPaid;
+      const remaining      = Math.max(0, grandTotal - totalPaid);
+      updatedOrder.remainingPayment = remaining.toFixed(2);
 
-      // Auto-fill payment date/time if not set
+      // Auto-stamp datetime for first-time payment entry
       const now = new Date().toISOString().slice(0, 16);
-      if (name === 'advanceAmount' && value > 0 && !updatedOrder.advanceDateTime) {
-        updatedOrder.advanceDateTime = now;
-      }
-      if (name === 'initialPayment' && value > 0 && !updatedOrder.initialPaymentDateTime) {
-        updatedOrder.initialPaymentDateTime = now;
-      }
-      if (name === 'finalPayment' && value > 0 && !updatedOrder.finalPaymentDateTime) {
-        updatedOrder.finalPaymentDateTime = now;
-      }
+      if (name === 'advanceAmount'  && value > 0 && !updatedOrder.advanceDateTime)        updatedOrder.advanceDateTime        = now;
+      if (name === 'initialPayment' && value > 0 && !updatedOrder.initialPaymentDateTime) updatedOrder.initialPaymentDateTime = now;
+      if (name === 'finalPayment'   && value > 0 && !updatedOrder.finalPaymentDateTime)   updatedOrder.finalPaymentDateTime   = now;
+      if (name === 'cashPaid'       && value > 0 && !updatedOrder.cashPaymentDateTime)    updatedOrder.cashPaymentDateTime    = now;
 
-      // Update payment status based on remaining payment
-      if (totalPaid === 0) {
-        updatedOrder.paymentStatus = 'Unpaid';
-      } else if (remainingPayment <= 0) {
-        updatedOrder.paymentStatus = 'Paid';
-      } else {
-        updatedOrder.paymentStatus = 'Partially Paid';
-      }
+      if      (totalPaid === 0)    updatedOrder.paymentStatus = 'Unpaid';
+      else if (remaining <= 0)     updatedOrder.paymentStatus = 'Paid';
+      else                         updatedOrder.paymentStatus = 'Partially Paid';
     }
-    
-    // Handle numeric fields
+
+    // Update numeric fields that affect grand total
     if (['shippingCharges', 'advanceAmount', 'initialPayment', 'cashAmount'].includes(name)) {
       updatedOrder[name] = parseFloat(value) || 0;
-      
-      // Recalculate grand total if shipping charges change
       if (name === 'shippingCharges') {
-        const subtotal = parseFloat(updatedOrder.subtotal) || 0;
-        const taxTotal = parseFloat(updatedOrder.taxTotal) || 0;
-        const discountTotal = parseFloat(updatedOrder.discountTotal) || 0;
-        updatedOrder.grandTotal = (subtotal + taxTotal - discountTotal + parseFloat(value || 0)).toFixed(2);
+        const sub  = parseFloat(updatedOrder.subtotal)      || 0;
+        const tax  = parseFloat(updatedOrder.taxTotal)      || 0;
+        const disc = parseFloat(updatedOrder.discountTotal) || 0;
+        updatedOrder.grandTotal = (sub + tax - disc + parseFloat(value || 0)).toFixed(2);
       }
     }
-    
-    // Handle payment terms and date changes
+
+    // Show/hide net due date based on payment terms / PO date
     if (name === 'paymentTerms' || name === 'poDate') {
       const paymentTerms = name === 'paymentTerms' ? value : updatedOrder.paymentTerms;
-      const poDate = name === 'poDate' ? value : updatedOrder.poDate;
-      
+      const poDate       = name === 'poDate'       ? value : updatedOrder.poDate;
       setShowCashAmount(checkShowCashAmount(paymentTerms, poDate));
-      
-      // Update due date if payment terms are Net 30/60
       if (['Net 30', 'Net 60'].includes(paymentTerms) && poDate) {
         calculateNetDueDate(paymentTerms, poDate);
       } else {
         setShowNetDueDate(false);
       }
     }
-    
+
     setEditOrder(updatedOrder);
   };
 
-  // Helper function to convert datetime-local format to ISO string
-  const convertToISOString = (dateTimeStr) => {
-    if (!dateTimeStr) return '';
-    try {
-      const date = new Date(dateTimeStr);
-      return date.toISOString();
-    } catch {
-      return '';
+  /** Recalculate quantityOrdered and unitPrice for a single item. */
+  const recalcItem = (item) => {
+    const cartons  = Number(item.cartonQuantity)  || 0;
+    const ppc      = Number(item.piecesPerCarton) || 1;
+    const loose    = Number(item.losePieces)      || 0;
+    const qty      = cartons * ppc + loose;
+    const perPiece = Number(item.perPiecePrice)   || 0;
+    return {
+      ...item,
+      quantityOrdered: qty,
+      unitPrice: (qty * perPiece).toFixed(2),
+    };
+  };
+
+  const handleEditItemFieldChange = (idx, field, value) => {
+    const items   = [...editOrder.items];
+    items[idx]    = { ...items[idx], [field]: value };
+
+    if (['cartonQuantity', 'losePieces', 'piecesPerCarton', 'perPiecePrice'].includes(field)) {
+      items[idx] = recalcItem(items[idx]);
     }
+
+    // Ensure unitPrice updates when only perPiecePrice changes
+    if (field === 'perPiecePrice') {
+      const qty      = Number(items[idx].quantityOrdered) || 0;
+      const perPiece = Number(value) || 0;
+      items[idx].unitPrice = (qty * perPiece).toFixed(2);
+    }
+
+    handleEditChange({ target: { name: 'items', value: items } });
+  };
+
+  const handleItemSourceChange = (idx, value) => {
+    const items = [...editOrder.items];
+    items[idx]  = {
+      ...items[idx],
+      itemSource: value,
+      ...(value === 'AdminProductList' && {
+        itemCode:    '',
+        itemName:    '',
+        description: '',
+        perPiecePrice: '',
+      }),
+    };
+    handleEditChange({ target: { name: 'items', value: items } });
+
+    // Open Add Product dialog when switching to NewProduct
+    if (value === 'NewProduct') {
+      setAddProductTargetIdx(idx);
+      setAddProductDialogOpen(true);
+    }
+  };
+
+  /** Called when a product is successfully created in AddProductDialog. */
+  const handleProductAdded = (newProduct) => {
+    if (addProductTargetIdx !== null) {
+      const items        = [...editOrder.items];
+      const piecesPerCarton = Number(newProduct.piecesPerCarton) || 1;
+      const cartons      = Number(items[addProductTargetIdx].cartonQuantity) || 0;
+      const loose        = Number(items[addProductTargetIdx].losePieces)     || 0;
+      const qty          = cartons * piecesPerCarton + loose;
+      const perPiece     = Number(newProduct.costPerPiece) || 0;
+
+      items[addProductTargetIdx] = {
+        ...items[addProductTargetIdx],
+        itemCode:       newProduct.SKU          || '',
+        itemName:       newProduct.name         || '',
+        description:    newProduct.category     || '',
+        perPiecePrice:  newProduct.costPerPiece || '',
+        piecesPerCarton: newProduct.piecesPerCarton || '',
+        quantityOrdered: qty,
+        unitPrice: qty && perPiece ? (qty * perPiece).toFixed(2) : '',
+      };
+      handleEditChange({ target: { name: 'items', value: items } });
+    }
+    setAddProductTargetIdx(null);
+  };
+
+  const addEditItem = () => {
+    setEditOrder((prev) => ({
+      ...prev,
+      items: [
+        ...(prev?.items || []),
+        {
+          itemSource:     'AdminProductList',
+          itemCode:       '',
+          itemName:       '',
+          description:    '',
+          cartonQuantity: '',
+          piecesPerCarton:'',
+          losePieces:     '',
+          quantityOrdered: 0,
+          uom:            'pieces',
+          perPiecePrice:  '',
+          unitPrice:      '',
+          tax:            '',
+          discount:       '',
+        },
+      ],
+    }));
   };
 
   const handleEditSave = async () => {
     try {
-      const token = localStorage.getItem('token');
-      
-      // Prepare the data to send, converting datetime-local format to ISO strings
+      const token        = localStorage.getItem('token');
+      const currentItems = editOrder.items || [];
+      const newItems     = currentItems.length > originalItemCount
+        ? currentItems.slice(originalItemCount)
+        : [];
+
       const dataToSend = {
         ...editOrder,
         advancePaymentDateTime: convertToISOString(editOrder.advanceDateTime),
         initialPaymentDateTime: convertToISOString(editOrder.initialPaymentDateTime),
-        finalPaymentDateTime: convertToISOString(editOrder.finalPaymentDateTime),
-        cashPaymentDateTime: convertToISOString(editOrder.cashPaymentDateTime)
+        finalPaymentDateTime:   convertToISOString(editOrder.finalPaymentDateTime),
+        cashPaymentDateTime:    convertToISOString(editOrder.cashPaymentDateTime),
+        // Only restock newly added items when order is already Received
+        newItems: (editOrder.orderStatus || '').toLowerCase() === 'received' ? newItems : [],
       };
-      
-      // Send the update request with authorization header
-      const response = await API.put(
-        `/purchase-orders/${editOrder._id}`,
-        dataToSend,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+
+      const response = await API.put(`/purchase-orders/${editOrder._id}`, dataToSend, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
 
       if (response.data) {
-        // Update local state with the returned data from server
         const updatedOrder = response.data;
-        setOrders(orders.map(order => 
-          order._id === updatedOrder._id ? updatedOrder : order
-        ));
-        setFilteredOrders(filteredOrders.map(order => 
-          order._id === updatedOrder._id ? updatedOrder : order
-        ));
+        const updater      = (list) =>
+          sortByMostRecent(list.map((o) => (o._id === updatedOrder._id ? updatedOrder : o)));
+        setOrders(updater);
+        setFilteredOrders(updater);
         setEditOpen(false);
-        // Show success message
         alert('Purchase Order updated successfully');
       }
     } catch (error) {
       console.error('Error updating order:', error);
-      // Show error message to user
       alert(error.response?.data?.message || 'Error updating purchase order. Please try again.');
     }
   };
 
-  // Calculate due date based on payment terms and PO date
-  const calculateDueDate = (paymentTerms, poDate) => {
-    if (!poDate || !['Net 30', 'Net 60'].includes(paymentTerms)) return '';
-    
-    const date = new Date(poDate);
-    const daysToAdd = paymentTerms === 'Net 30' ? 30 : 60;
-    date.setDate(date.getDate() + daysToAdd);
-    return date.toISOString().split('T')[0];
-  };
-
-  // Calculate totals for edit dialog
-  const calculateDialogTotals = () => {
-    let subtotal = 0, taxTotal = 0, discountTotal = 0;
-    if (editOrder?.items) {
-      editOrder.items.forEach(item => {
-        const price = Number(item.unitPrice) || 0;
-        const tax = Number(item.tax) || 0;
-        const discount = Number(item.discount) || 0;
-        subtotal += price;
-        taxTotal += tax;
-        discountTotal += discount;
-      });
-    }
-    const shipping = Number(editOrder?.shippingCharges) || 0;
-    const grandTotal = subtotal + taxTotal - discountTotal + shipping;
-    return { subtotal, taxTotal, discountTotal, grandTotal };
-  };
-
-  // Handle file uploads in edit dialog
   const handleEditFileUpload = async (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const formData = new FormData();
     formData.append('image', file);
-    
     try {
       const response = await fetch('http://localhost:5000/api/upload', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+        method:  'POST',
+        body:    formData,
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
-      
       if (!response.ok) throw new Error('Upload failed');
       const data = await response.json();
-      
-      // Update the editOrder state with the new file URL, replacing any existing file
-      setEditOrder(prev => ({
+      setEditOrder((prev) => ({
         ...prev,
-        [type]: data.url,
-        // Replace the old file with the new one instead of appending
-        attachments: prev.attachments 
-          ? prev.attachments.filter(url => !url.includes(type)) // Remove old file of same type
-          : []
+        [type]:      data.url,
+        attachments: prev.attachments
+          ? prev.attachments.filter((url) => !url.includes(type))
+          : [],
       }));
     } catch (error) {
       console.error('File upload error:', error);
     }
   };
 
-  // Dialog content for editing PO
-  const renderEditDialog = () => (
-    <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="xl" fullWidth>
-      <DialogTitle sx={{ bgcolor: 'primary.main', color: 'white', display: 'flex', alignItems: 'center' }}>
-        <Typography variant="h5" component="div" sx={{ flexGrow: 1 }}>Edit Purchase Order</Typography>
-      </DialogTitle>
-      <DialogContent sx={{ p: 3 }}>
-        <Grid container spacing={3}>
-          {/* Basic PO Information */}
-          <Grid item xs={12}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Basic Information</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={3}>
-                  <TextField
-                    fullWidth
-                    name="poNumber"
-                    label="PO Number"
-                    value={editOrder?.poNumber || ''}
-                    onChange={handleEditChange}
-                    disabled
-                  />
-                </Grid>
-                <Grid item xs={12} sm={3}>
-                  <TextField
-                    fullWidth
-                    type="date"
-                    name="poDate"
-                    label="PO Date"
-                    value={editOrder?.poDate || ''}
-                    onChange={handleEditChange}
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={3}>
-                  <FormControl fullWidth>
-                    <InputLabel>Order Status</InputLabel>
-                    <Select
-                      name="orderStatus"
-                      value={editOrder?.orderStatus || 'Pending'}
-                      onChange={handleEditChange}
-                      label="Order Status"
-                    >
-                      {defaultStatus.map(status => (
-                        <MenuItem key={status} value={status}>{status}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={3}>
-                  <FormControl fullWidth>
-                    <InputLabel>Payment Status</InputLabel>
-                    <Select
-                      name="paymentStatus"
-                      value={editOrder?.paymentStatus || 'Unpaid'}
-                      onChange={handleEditChange}
-                      label="Payment Status"
-                    >
-                      <MenuItem value="Unpaid">Unpaid</MenuItem>
-                      <MenuItem value="Partially Paid">Partially Paid</MenuItem>
-                      <MenuItem value="Paid">Paid</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={3}>
-                  <FormControl fullWidth>
-                    <InputLabel>Payment Terms</InputLabel>
-                    <Select
-                      name="paymentTerms"
-                      value={editOrder?.paymentTerms || ''}
-                      onChange={(e) => {
-                        const newValue = e.target.value;
-                        const newDueDate = calculateDueDate(newValue, editOrder?.poDate);
-                        handleEditChange({
-                          target: {
-                            name: 'paymentTerms',
-                            value: newValue
-                          }
-                        });
-                        if (newDueDate) {
-                          handleEditChange({
-                            target: {
-                              name: 'dueDate',
-                              value: newDueDate
-                            }
-                          });
-                        }
-                      }}
-                      label="Payment Terms"
-                    >
-                      <MenuItem value="Net 30">Net 30</MenuItem>
-                      <MenuItem value="Net 60">Net 60</MenuItem>
-                      <MenuItem value="COD">COD</MenuItem>
-                      <MenuItem value="Advance Payment">Advance Payment</MenuItem>
-                      <MenuItem value="Partial Payment">Partial Payment</MenuItem>
-                      <MenuItem value="Cash Payment">Cash Payment</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-                {['Net 30', 'Net 60'].includes(editOrder?.paymentTerms) && (
-                  <Grid item xs={12} sm={3}>
-                    <TextField
-                      fullWidth
-                      label="Due Date"
-                      name="dueDate"
-                      value={editOrder?.dueDate || ''}
-                      type="date"
-                      InputLabelProps={{ shrink: true }}
-                      InputProps={{ readOnly: true }}
-                    />
-                  </Grid>
-                )}
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    name="reference"
-                    label="Reference/Notes"
-                    value={editOrder?.reference || ''}
-                    onChange={handleEditChange}
-                    multiline
-                    rows={2}
-                  />
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
-
-          {/* Vendor Information Section */}
-          <Grid item xs={12}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Vendor Information</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Vendor</InputLabel>
-                    <Select
-                      name="vendorName"
-                      value={editOrder?.vendorName || ''}
-                      onChange={handleEditChange}
-                      label="Vendor"
-                    >
-                      {vendors?.map(vendor => (
-                        <MenuItem key={vendor._id} value={vendor.vendorName}>
-                          {vendor.vendorName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="vendorId"
-                    label="Vendor ID"
-                    value={editOrder?.vendorId || ''}
-                    InputProps={{ readOnly: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="vendorPhone"
-                    label="Vendor Phone"
-                    value={editOrder?.vendorPhone || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="vendorEmail"
-                    label="Vendor Email"
-                    value={editOrder?.vendorEmail || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    name="vendorAddress"
-                    label="Vendor Address"
-                    value={editOrder?.vendorAddress || ''}
-                    onChange={handleEditChange}
-                    multiline
-                    rows={2}
-                  />
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
-
-          {/* Ship To & Delivery Information Section */}
-          <Grid item xs={12}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Ship To & Delivery Information</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="shipToName"
-                    label="Ship To Name"
-                    value={editOrder?.shipToName || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="shipToPhone"
-                    label="Ship To Phone"
-                    value={editOrder?.shipToPhone || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="shipToEmail"
-                    label="Ship To Email"
-                    value={editOrder?.shipToEmail || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    type="date"
-                    name="expectedDeliveryDate"
-                    label="Expected Delivery Date"
-                    value={editOrder?.expectedDeliveryDate || ''}
-                    onChange={handleEditChange}
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    name="shipToAddress"
-                    label="Ship To Address"
-                    value={editOrder?.shipToAddress || ''}
-                    onChange={handleEditChange}
-                    multiline
-                    rows={2}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Delivery Method</InputLabel>
-                    <Select
-                      name="deliveryMethod"
-                      value={editOrder?.deliveryMethod || ''}
-                      onChange={handleEditChange}
-                      label="Delivery Method"
-                    >
-                      {defaultDeliveryMethods.map(method => (
-                        <MenuItem key={method} value={method}>{method}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="deliveryLocation"
-                    label="Delivery Location"
-                    value={editOrder?.deliveryLocation || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
-
-          {/* Line Items Section */}
-          <Grid item xs={12}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Line Items</Typography>
-              {editOrder?.items?.map((item, idx) => (
-                <Box key={idx} sx={{ mb: 3, p: 2, border: '1px solid #e0e0e0', borderRadius: 2, bgcolor: '#fafafa' }}>
-                  <Divider sx={{ mb: 2 }}>
-                    <Chip label={`Item ${idx + 1}`} size="small" />
-                  </Divider>
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} sm={6} md={3}>
-                      <TextField
-                        fullWidth
-                        name="itemCode"
-                        label="Item Code"
-                        value={item.itemCode || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          items[idx] = { ...items[idx], itemCode: e.target.value };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={3}>
-                      <TextField
-                        fullWidth
-                        name="itemName"
-                        label="Item Name"
-                        value={item.itemName || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          items[idx] = { ...items[idx], itemName: e.target.value };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={2}>
-                      <TextField
-                        fullWidth
-                        name="quantityOrdered"
-                        label="Quantity"
-                        type="number"
-                        value={item.quantityOrdered || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          const qty = Number(e.target.value) || 0;
-                          const perPiece = Number(items[idx].perPiecePrice) || 0;
-                          items[idx] = { 
-                            ...items[idx], 
-                            quantityOrdered: e.target.value,
-                            unitPrice: (qty * perPiece).toFixed(2)
-                          };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={2}>
-                      <FormControl fullWidth>
-                        <InputLabel>UOM</InputLabel>
-                        <Select
-                          name="uom"
-                          value={item.uom || ''}
-                          label="UOM"
-                          onChange={(e) => {
-                            const items = [...editOrder.items];
-                            items[idx] = { ...items[idx], uom: e.target.value };
-                            handleEditChange({ target: { name: 'items', value: items }});
-                          }}
-                        >
-                          {defaultUOM.map(u => (
-                            <MenuItem key={u} value={u}>{u}</MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={2}>
-                      <TextField
-                        fullWidth
-                        name="perPiecePrice"
-                        label="Per Piece Price"
-                        type="number"
-                        value={item.perPiecePrice || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          const perPiece = Number(e.target.value) || 0;
-                          const qty = Number(items[idx].quantityOrdered) || 0;
-                          items[idx] = { 
-                            ...items[idx], 
-                            perPiecePrice: e.target.value,
-                            unitPrice: (qty * perPiece).toFixed(2)
-                          };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={2}>
-                      <TextField
-                        fullWidth
-                        name="tax"
-                        label="Tax"
-                        type="number"
-                        value={item.tax || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          items[idx] = { ...items[idx], tax: e.target.value };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={2}>
-                      <TextField
-                        fullWidth
-                        name="discount"
-                        label="Discount"
-                        type="number"
-                        value={item.discount || ''}
-                        onChange={(e) => {
-                          const items = [...editOrder.items];
-                          items[idx] = { ...items[idx], discount: e.target.value };
-                          handleEditChange({ target: { name: 'items', value: items }});
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        name="unitPrice"
-                        label="Total Item Price (Calculated)"
-                        type="number"
-                        value={item.unitPrice || '0.00'}
-                        InputProps={{ 
-                          readOnly: true,
-                          sx: { fontWeight: 'bold', color: 'primary.main' }
-                        }}
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              ))}
-            </Paper>
-          </Grid>
-
-          {/* Payment Section */}
-          <Grid item xs={12} md={6}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa', height: '100%' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Payment Details</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Payment Method</InputLabel>
-                    <Select
-                      name="paymentMethod"
-                      value={editOrder?.paymentMethod || ''}
-                      onChange={handleEditChange}
-                      label="Payment Method"
-                    >
-                      {paymentMethodOptions.map(method => (
-                        <MenuItem key={method} value={method}>{method}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Currency</InputLabel>
-                    <Select
-                      name="currency"
-                      value={editOrder?.currency || 'PKR'}
-                      onChange={handleEditChange}
-                      label="Currency"
-                    >
-                      {defaultCurrency.map(curr => (
-                        <MenuItem key={curr} value={curr}>{curr}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                {/* Conditional Payment Fields based on Payment Terms */}
-                {editOrder?.paymentTerms === 'Advance Payment' && (
-                  <>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="advanceAmount"
-                        label="Advance Amount"
-                        value={editOrder?.advanceAmount || ''}
-                        onChange={handleEditChange}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="datetime-local"
-                        name="advanceDateTime"
-                        label="Advance Date & Time"
-                        value={editOrder?.advanceDateTime || ''}
-                        onChange={handleEditChange}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={!editOrder?.advanceAmount}
-                      />
-                    </Grid>
-
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="finalPayment"
-                        label="Final Payment"
-                        value={editOrder?.finalPayment || ''}
-                        onChange={handleEditChange}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                    
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="datetime-local"
-                        name="finalPaymentDateTime"
-                        label="Final Payment Date & Time"
-                        value={editOrder?.finalPaymentDateTime || ''}
-                        onChange={handleEditChange}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={!editOrder?.finalPayment}
-                      />
-                    </Grid>
-
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="remainingPayment"
-                        label="Remaining Payment"
-                        value={editOrder?.remainingPayment || (editOrder?.grandTotal - (editOrder?.advanceAmount || 0)).toFixed(2)}
-                        InputProps={{
-                          readOnly: true,
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                  </>
-                )}
-
-                {editOrder?.paymentTerms === 'Partial Payment' && (
-                  <>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="initialPayment"
-                        label="Initial Payment"
-                        value={editOrder?.initialPayment || ''}
-                        onChange={handleEditChange}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="datetime-local"
-                        name="initialPaymentDateTime"
-                        label="Initial Payment Date & Time"
-                        value={editOrder?.initialPaymentDateTime || ''}
-                        onChange={handleEditChange}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={!editOrder?.initialPayment}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="finalPayment"
-                        label="Final Payment"
-                        value={editOrder?.finalPayment || ''}
-                        onChange={handleEditChange}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="datetime-local"
-                        name="finalPaymentDateTime"
-                        label="Final Payment Date & Time"
-                        value={editOrder?.finalPaymentDateTime || ''}
-                        onChange={handleEditChange}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={!editOrder?.finalPayment}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="remainingPayment"
-                        label="Remaining Payment"
-                        value={editOrder?.remainingPayment || editOrder?.grandTotal || '0.00'}
-                        InputProps={{
-                          readOnly: true,
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                  </>
-                )}
-
-                {editOrder?.paymentTerms === 'Cash Payment' && (
-                  <>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        name="cashPaid"
-                        label="Cash Paid"
-                        value={editOrder?.cashPaid || ''}
-                        onChange={handleEditChange}
-                        InputProps={{
-                          startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                        }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        type="datetime-local"
-                        name="cashPaymentDateTime"
-                        label="Cash Payment Date & Time"
-                        value={editOrder?.cashPaymentDateTime || ''}
-                        onChange={handleEditChange}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={!editOrder?.cashPaid}
-                      />
-                    </Grid>
-                  </>
-                )}
-
-                {/* File Upload Fields based on Payment Method */}
-                {editOrder?.paymentMethod === 'Bank Transfer' && (
-                  <Grid item xs={12} sm={6}>
-                    <TextField
-                      fullWidth
-                      type="file"
-                      name="bankReceipt"
-                      label="Upload Bank Receipt"
-                      onChange={(e) => handleEditFileUpload(e, 'bankReceipt')}
-                      InputLabelProps={{ shrink: true }}
-                      inputProps={{ accept: '.png,.jpg,.jpeg,.pdf' }}
-                    />
-                    {editOrder?.bankReceipt && (
-                      <Button
-                        size="small"
-                        onClick={() => window.open(editOrder.bankReceipt, '_blank')}
-                        sx={{ mt: 1 }}
-                      >
-                        View Receipt
-                      </Button>
-                    )}
-                  </Grid>
-                )}
-
-                {editOrder?.paymentMethod === 'Cheque' && (
-                  <Grid item xs={12} sm={6}>
-                    <TextField
-                      fullWidth
-                      type="file"
-                      name="chequeReceipt"
-                      label="Upload Cheque"
-                      onChange={(e) => handleEditFileUpload(e, 'chequeReceipt')}
-                      InputLabelProps={{ shrink: true }}
-                      inputProps={{ accept: '.png,.jpg,.jpeg,.pdf' }}
-                    />
-                    {editOrder?.chequeReceipt && (
-                      <Button
-                        size="small"
-                        onClick={() => window.open(editOrder.chequeReceipt, '_blank')}
-                        sx={{ mt: 1 }}
-                      >
-                        View Cheque
-                      </Button>
-                    )}
-                  </Grid>
-                )}
-              </Grid>
-            </Paper>
-          </Grid>
-
-          {/* Totals Section */}
-          <Grid item xs={12} md={6}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa', height: '100%' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Order Totals</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Subtotal"
-                    value={editOrder?.subtotal || 0}
-                    InputProps={{
-                      readOnly: true,
-                      startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Tax Total"
-                    value={editOrder?.taxTotal || 0}
-                    InputProps={{
-                      readOnly: true,
-                      startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    name="shippingCharges"
-                    label="Shipping Charges"
-                    type="number"
-                    value={editOrder?.shippingCharges || ''}
-                    onChange={handleEditChange}
-                    InputProps={{
-                      startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="Discount Total"
-                    value={editOrder?.discountTotal || 0}
-                    InputProps={{
-                      readOnly: true,
-                      startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="Grand Total"
-                    value={editOrder?.grandTotal || 0}
-                    InputProps={{
-                      readOnly: true,
-                      startAdornment: <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>,
-                      sx: { 
-                        '& input': {
-                          fontWeight: 'bold',
-                          fontSize: '1.2rem',
-                          color: 'primary.main'
-                        }
-                      }
-                    }}
-                  />
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
-
-          {/* Additional Information */}
-          <Grid item xs={12}>
-            <Paper elevation={3} sx={{ p: 2, mb: 2, bgcolor: '#f8f9fa' }}>
-              <Typography variant="h6" sx={{ mb: 2, color: 'primary.main' }}>Additional Information</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    fullWidth
-                    name="createdBy"
-                    label="Created by"
-                    value={editOrder?.createdBy || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    fullWidth
-                    name="approvedBy"
-                    label="Approved by"
-                    value={editOrder?.approvedBy || ''}
-                    onChange={handleEditChange}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <FormControl fullWidth>
-                    <InputLabel>Purchase Type</InputLabel>
-                    <Select
-                      name="purchaseType"
-                      value={editOrder?.purchaseType || 'Local'}
-                      onChange={handleEditChange}
-                      label="Purchase Type"
-                    >
-                      {defaultPurchaseTypes.map(type => (
-                        <MenuItem key={type} value={type}>{type}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
-        </Grid>
-      </DialogContent>
-      <DialogActions sx={{ p: 3, bgcolor: '#f8f9fa' }}>
-        <Button onClick={() => setEditOpen(false)} variant="outlined" color="secondary">
-          Cancel
-        </Button>
-        <Button onClick={handleEditSave} variant="contained" color="primary">
-          Save Changes
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-
   const handleDownloadPDF = async (order) => {
-    // Fetch fresh order data with brand information before generating PDF
     try {
       const response = await API.get(`/purchase-orders/${order._id}`);
-      const freshOrder = response.data;
-      generatePDF(freshOrder);
+      generatePDF(response.data);
     } catch (error) {
       console.error('Error fetching fresh order data:', error);
-      // Fallback to original order data
       generatePDF(order);
     }
   };
 
-  const generatePDF = (order) => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    
-    // Helper function to convert hex to RGB
-    const hexToRgb = (hex) => {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      return [r, g, b];
-    };
-
-    // Helper function to draw table header
-    const drawTableHeader = (yPosition) => {
-      const tableWidth = pageWidth - 28; // Match footer line width
-      doc.setFillColor(15, 37, 110);
-      doc.roundedRect(14, yPosition, tableWidth, 10, 2, 2, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.text('S/N', 18, yPosition + 6);
-      doc.text('ITEM', 28, yPosition + 6);
-      doc.text('DESCRIPTION', 50, yPosition + 6);
-      doc.text('CO', 87, yPosition + 6); // Company/Brand column
-      doc.text('QTY', 115, yPosition + 6, { align: 'right' });
-      doc.text('UNIT PRICE', 145, yPosition + 6, { align: 'right' });
-      doc.text('TOTAL', pageWidth - 17, yPosition + 6, { align: 'right' }); // Align with right edge
-      return yPosition + 15; // Return the Y position after header
-    };
-
-    // Helper function to draw footer on each page
-    const drawFooter = () => {
-      const footerY = pageHeight - 18;
-      
-      // Footer border - matches all other element widths
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.5);
-      doc.line(14, footerY - 1, pageWidth - 14, footerY - 1);
-      
-      // Footer text
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.setFont('helvetica', 'italic');
-      doc.text('Thank you for your business!', pageWidth / 2, footerY + 4, { align: 'center' });
-      
-      // Generated timestamp - left side
-      const genTime = new Date().toLocaleDateString() + ' at ' + new Date().toLocaleTimeString();
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7);
-      doc.setTextColor(120, 120, 120);
-      doc.text(`Generated: ${genTime}`, 14, footerY + 10);
-    };
-    
-    // Professional Header with Gradient Effect
-    doc.setFillColor(15, 37, 110);
-    doc.rect(0, 0, pageWidth, 25, 'F');
-    
-    // Header text
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
-    doc.setFont('helvetica', 'bold');
-    doc.text('PURCHASE ORDER', pageWidth / 2, 15, { align: 'center' });
-    
-    // Sub-header line
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(0.3);
-    doc.line(14, 19, pageWidth - 14, 19);
-    
-    // Company Information (Left side with accent) - more compact
-    doc.setFillColor(245, 248, 255);
-    doc.roundedRect(14, 32, 85, 42, 2, 2, 'F');
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.setTextColor(15, 37, 110);
-    doc.text('NEW ADIL ELECTRIC CONCERN', 17, 40);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(70, 70, 70);
-    doc.text('4-B, Jamiat Center, Sha Alam Market', 17, 47);
-    doc.text('Lahore, Pakistan', 17, 52);
-    doc.text('Phone: (042) 123-4567', 17, 57);
-    doc.text('Email: info@adilelectric.com', 17, 62);
-    
-    // PO Information Box (Right side) - more compact
-    doc.setFillColor(250, 250, 250);
-    doc.roundedRect(pageWidth - 90, 32, 80, 42, 2, 2, 'FD');
-    doc.setDrawColor(200, 200, 200);
-    
-    // PO Number
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text('PO NUMBER', pageWidth - 85, 42);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(15, 37, 110);
-    doc.text(order.poNumber || 'N/A', pageWidth - 17, 42, { align: 'right' });
-    
-    // PO Date
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text('PO DATE', pageWidth - 85, 50);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.setTextColor(0, 0, 0);
-    doc.text(order.poDate?.slice(0,10) || 'N/A', pageWidth - 17, 50, { align: 'right' });
-    
-    // PO Status Label and Badge - aligned on same line
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text('PO STATUS', pageWidth - 85, 58);
-    
-    // Status Badge - Smaller size, aligned with text
-    const getStatusColor = (status) => {
-      switch(status?.toLowerCase()) {
-        case 'approved': return '#2e7d32';
-        case 'pending': return '#fb8c00';  // Fixed: Orange for pending
-        case 'cancelled': return '#c62828';
-        case 'received': return '#2e7d32';
-        case 'partially received': return '#ff9800';
-        default: return '#1e88e5';
-      }
-    };
-    
-    const statusColor = getStatusColor(order.orderStatus);
-    const [r, g, b] = hexToRgb(statusColor);
-    
-    // Draw smaller status badge aligned with text
-    const statusText = (order.orderStatus || 'PENDING').toUpperCase();
-    const statusWidth = Math.max(35, doc.getTextWidth(statusText) + 12); // Smaller width
-    
-    doc.setFillColor(r, g, b);
-    doc.roundedRect(pageWidth - 17 - statusWidth, 56, statusWidth, 8, 2, 2, 'F'); // Smaller height, aligned with text
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(pageWidth - 17 - statusWidth, 56, statusWidth, 8, 2, 2, 'D');
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7); // Smaller font
-    doc.setTextColor(255, 255, 255);
-    doc.text(
-      statusText,
-      pageWidth - 17 - (statusWidth / 2),
-      61, // Aligned with text line
-      { align: 'center' }
-    );
-    
-    // Vendor & Ship To Section (Side by side) - Equal widths matching footer line
-    const sectionY = 82;
-    const sectionWidth = (pageWidth - 28 - 4) / 2; // Equal widths with gap, matching footer line width
-    const sectionGap = 4;
-    
-    // Vendor Section
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(14, sectionY, sectionWidth, 38, 2, 2, 'FD');
-    doc.setDrawColor(15, 37, 110);
-    doc.setLineWidth(0.3);
-    doc.line(14, sectionY + 9, 14 + sectionWidth, sectionY + 9);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(15, 37, 110);
-    doc.text('VENDOR', 17, sectionY + 7);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
-    doc.text(order.vendorName || 'N/A', 17, sectionY + 14);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.text(`Phone: ${order.vendorPhone || 'N/A'}`, 17, sectionY + 19);
-    doc.text(`Email: ${order.vendorEmail || 'N/A'}`, 17, sectionY + 24);
-    doc.text(`Address: ${order.vendorAddress || 'N/A'}`, 17, sectionY + 29, { maxWidth: sectionWidth - 6 });
-    
-    // Ship To Section
-    const shipToX = 14 + sectionWidth + sectionGap;
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(shipToX, sectionY, sectionWidth, 38, 2, 2, 'FD');
-    doc.setDrawColor(15, 37, 110);
-    doc.setLineWidth(0.3);
-    doc.line(shipToX, sectionY + 9, shipToX + sectionWidth, sectionY + 9);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(15, 37, 110);
-    doc.text('SHIP TO', shipToX + 3, sectionY + 7);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
-    doc.text(order.shipToName || 'N/A', shipToX + 3, sectionY + 14);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.text(`Phone: ${order.shipToPhone || 'N/A'}`, shipToX + 3, sectionY + 19);
-    doc.text(`Email: ${order.shipToEmail || 'N/A'}`, shipToX + 3, sectionY + 24);
-    doc.text(`Address: ${order.shipToAddress || 'N/A'}`, shipToX + 3, sectionY + 29, { maxWidth: sectionWidth - 6 });
-    
-    // Items Table Section - Start with better positioning
-    const tableStartY = 128;
-    let currentY = drawTableHeader(tableStartY);
-    
-    // Table Rows with dynamic page breaks
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    const baseRowHeight = 10;
-    const minRowHeight = 8;
-    
-    if (order.items && order.items.length > 0) {
-      order.items.forEach((item, index) => {
-        try {
-          // Calculate description height
-          const desc = item.itemName || '-';
-          const descLines = doc.splitTextToSize(desc, 40); // Adjusted width for CO column
-          const descHeight = Math.max(1, descLines.length) * 4;
-          const rowHeight = Math.max(minRowHeight, descHeight + 4);
-          
-          // Check if row will exceed page boundary (leaving space for totals and footer)
-          const spaceNeeded = rowHeight + 80; // Extra space for totals section
-          if (currentY + spaceNeeded > pageHeight - 30) {
-            doc.addPage();
-            currentY = drawTableHeader(25); // Start new table on new page
-          }
-          
-          // No alternating row colors - removed for cleaner look
-          
-          // Calculate vertical center for single-line content
-          const textY = currentY + (rowHeight / 2) - 1;
-          
-          // Serial Number (vertically centered)
-          doc.setFontSize(8);
-          doc.setFont('helvetica', 'normal');
-          doc.text(String(index + 1), 18, textY);
-          
-          // Item code (vertically centered)
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(8);
-          doc.text(item.itemCode || '-', 28, textY);
-          
-          // Item description (multi-line support, vertically centered)
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(7);
-          const descStartY = currentY + (rowHeight - (descLines.length * 4)) / 2 + 2;
-          doc.text(descLines, 50, descStartY);
-          
-          // Company/Brand (CO) column - aligned with header at position 87
-          doc.setFontSize(7);
-          const brandText = item.brand || item.vendor || item.company || 'N/A';
-          console.log(`PDF Debug - Item: ${item.itemCode}, Brand: ${item.brand}, Vendor: ${item.vendor}, Final: ${brandText}`);
-          doc.text(brandText, 87, textY);
-          
-          // Quantity (vertically centered) - adjusted position for CO column
-          doc.setFontSize(8);
-          doc.text(String(item.quantityOrdered || '0'), 115, textY, { align: 'right' });
-          
-          // Unit Price (vertically centered) - adjusted position for CO column
-          doc.text(`${Number(item.perPiecePrice || 0).toFixed(2)}`, 145, textY, { align: 'right' });
-          
-          // Total (vertically centered, bold)
-          const total = (Number(item.quantityOrdered || 0) * Number(item.perPiecePrice || 0)).toFixed(2);
-          doc.setFont('helvetica', 'bold');
-          doc.text(total, pageWidth - 17, textY, { align: 'right' }); // Align with right edge
-          
-          // Move to next row
-          currentY += rowHeight + 2;
-          
-          // Row separator (subtle)
-          if (index < order.items.length - 1) {
-            doc.setDrawColor(230, 230, 230);
-            doc.setLineWidth(0.2);
-            doc.line(14, currentY - 1, pageWidth - 14, currentY - 1);
-          }
-        } catch (error) {
-          console.error('Error rendering item:', item, error);
-          currentY += baseRowHeight;
-        }
-      });
-    } else {
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(9);
-      doc.setTextColor(150, 150, 150);
-      doc.text('No items in this order', 50, currentY);
-      currentY += baseRowHeight;
-    }
-    
-    // Totals Section - Positioned at bottom above footer with equal widths
-    const footerHeight = 30;
-    const totalsHeight = 50;
-    let totalsStartY = pageHeight - footerHeight - totalsHeight - 5;
-    
-    // Check if totals section will fit on current page after items
-    if (currentY + 15 > totalsStartY) {
-      doc.addPage();
-      totalsStartY = pageHeight - footerHeight - totalsHeight - 5;
-    }
-    
-    // Equal width calculations matching footer line
-    const bottomSectionWidth = (pageWidth - 28 - 4) / 2; // Equal widths with gap, matching footer line width
-    const bottomSectionGap = 4;
-    
-    // Payment Information (Left side) - Equal width with footer line
-    doc.setFillColor(248, 249, 252);
-    doc.roundedRect(14, totalsStartY, bottomSectionWidth, totalsHeight, 2, 2, 'FD');
-    doc.setDrawColor(220, 220, 220);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(15, 37, 110);
-    doc.text('PAYMENT DETAILS', 17, totalsStartY + 8);
-    
-    doc.setDrawColor(15, 37, 110);
-    doc.setLineWidth(0.3);
-    doc.line(17, totalsStartY + 10, 14 + bottomSectionWidth - 3, totalsStartY + 10);
-    
-    doc.setFontSize(8);
-    doc.setTextColor(70, 70, 70);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Payment Terms:', 17, totalsStartY + 18);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(order.paymentTerms || 'Net 30', 17, totalsStartY + 25);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(70, 70, 70);
-    doc.text('Payment Method:', 17, totalsStartY + 33);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(order.paymentMethod || 'Bank Transfer', 17, totalsStartY + 40);
-    
-    // ORDER TOTALS Section (Right side) - Equal width with footer line
-    const totalsBoxX = 14 + bottomSectionWidth + bottomSectionGap;
-    
-    // Background box
-    doc.setFillColor(250, 250, 250);
-    doc.roundedRect(totalsBoxX, totalsStartY, bottomSectionWidth, totalsHeight, 2, 2, 'FD');
-    doc.setDrawColor(220, 220, 220);
-    
-    // ORDER TOTALS header
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(15, 37, 110);
-    doc.text('ORDER TOTALS', totalsBoxX + 3, totalsStartY + 8);
-    
-    doc.setDrawColor(15, 37, 110);
-    doc.setLineWidth(0.3);
-    doc.line(totalsBoxX + 3, totalsStartY + 10, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 10);
-    
-    // Subtotals with better spacing
-    doc.setFontSize(8);
-    doc.setTextColor(70, 70, 70);
-    
-    // Subtotal
-    doc.setFont('helvetica', 'normal');
-    doc.text('Subtotal:', totalsBoxX + 3, totalsStartY + 18);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(`${Number(order.subtotal || 0).toFixed(2)}`, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 18, { align: 'right' });
-    
-    // Tax
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(70, 70, 70);
-    doc.text('Tax:', totalsBoxX + 3, totalsStartY + 25);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(`${Number(order.taxTotal || 0).toFixed(2)}`, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 25, { align: 'right' });
-    
-    // Discount
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(70, 70, 70);
-    doc.text('Discount:', totalsBoxX + 3, totalsStartY + 32);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(`${Number(order.discountTotal || 0).toFixed(2)}`, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 32, { align: 'right' });
-    
-    // Shipping
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(70, 70, 70);
-    doc.text('Shipping:', totalsBoxX + 3, totalsStartY + 39);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(`${Number(order.shippingCharges || 0).toFixed(2)}`, totalsBoxX + bottomSectionWidth - 3, totalsStartY + 39, { align: 'right' });
-    
-    // Grand Total with emphasis - spans full width below both sections
-    const grandTotalY = totalsStartY + totalsHeight + 2;
-    doc.setFillColor(15, 37, 110);
-    doc.roundedRect(14, grandTotalY, pageWidth - 28, 12, 2, 2, 'F');
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(255, 255, 255);
-    doc.text('GRAND TOTAL:', 17, grandTotalY + 8);
-    doc.text(`${Number(order.grandTotal || 0).toFixed(2)}`, pageWidth - 17, grandTotalY + 8, { align: 'right' });
-    
-    // Draw footer on all pages
-    const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      drawFooter();
-      
-      // Page number - right side
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.setFont('helvetica', 'normal');
-      doc.text(
-        `Page ${i} of ${pageCount}`,
-        pageWidth - 14,
-        pageHeight - 5,
-        { align: 'right' }
-      );
-    }
-
-    // Save the PDF
-    doc.save(`PO_${order.poNumber || 'order'}_${new Date().toISOString().slice(0,10)}.pdf`);
-  };
-
   const handlePrintReport = () => {
-    const rows = filteredOrders || [];
-    const start = startDate || 'All time';
-    const end = endDate || 'Now';
-    const vendor = vendorFilter || 'All vendors';
-    const status = statusFilter || 'All';
+    const rows        = filteredOrders || [];
+    const start       = startDate   || 'All time';
+    const end         = endDate     || 'Now';
+    const vendor      = vendorFilter || 'All vendors';
+    const status      = statusFilter || 'All';
+    const totalAmount = rows.reduce((sum, r) => sum + Number(r.grandTotal || 0), 0);
+    const dateRange   = startDate || endDate ? `From: ${start} To: ${end}` : 'All Dates';
 
-    const rowsHtml = rows.map(r => `
+    const rowsHtml = rows.map((r, idx) => `
       <tr>
-        <td>${r.poNumber || ''}</td>
-        <td>${r.poDate ? (r.poDate.slice ? r.poDate.slice(0,10) : new Date(r.poDate).toLocaleDateString()) : ''}</td>
-        <td>${r.vendorName || ''}</td>
-        <td>${r.orderStatus || ''}</td>
-        <td style="text-align:right">Rs${Number(r.grandTotal || 0).toFixed(2)}</td>
-        <td>${r.paymentStatus || ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;text-align:center;">${idx + 1}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-weight:bold;">${r.poNumber || ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;">${r.poDate ? (r.poDate.slice ? r.poDate.slice(0, 10) : new Date(r.poDate).toLocaleDateString()) : ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;">${r.vendorName || ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;">${r.orderStatus || ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;">${r.paymentStatus || ''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;">Rs. ${Number(r.grandTotal || 0).toLocaleString()}</td>
       </tr>
     `).join('');
 
     const html = `
-      <html><head><title>Purchase Report ${start} - ${end}</title>
-        <style>table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}</style>
-        </head><body>
-        <h3>Purchase Orders Report</h3>
-        <div>From: ${start} To: ${end}</div>
-        <div>Vendor: ${vendor} | Status: ${status}</div>
-        <table><thead><tr><th>PO#</th><th>Date</th><th>Vendor</th><th>Status</th><th style="text-align:right">Total</th><th>Payment Status</th></tr></thead><tbody>${rowsHtml}</tbody></table>
-      </body></html>
+      <html>
+        <head>
+          <title>Purchase Orders Report</title>
+          <style>
+            * { margin: 0; padding: 0; }
+            body { font-family: 'Arial', sans-serif; background: #fff; color: #333; padding: 20px; line-height: 1.6; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #1976d2; padding-bottom: 15px; }
+            .header h1 { color: #1976d2; font-size: 24px; margin-bottom: 10px; }
+            .header p { font-size: 13px; margin: 4px 0; }
+            .info-section { background: #f9f9f9; padding: 12px 15px; margin: 15px 0; border-left: 4px solid #1976d2; }
+            .info-section p { font-size: 13px; margin: 4px 0; }
+            h2 { color: #1976d2; font-size: 16px; margin-top: 20px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 2px solid #ddd; }
+            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+            th { background-color: #1976d2; color: white; padding: 12px; text-align: left; font-weight: bold; font-size: 13px; }
+            td { padding: 10px; font-size: 12px; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .total-row { background-color: #e8f4f8; font-weight: bold; }
+            .total-row td { padding: 12px; border-top: 2px solid #1976d2; }
+            @media print { body { padding: 0; } .page-break { page-break-after: always; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Purchase Orders Report</h1>
+            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+          </div>
+          <div class="info-section">
+            <p><strong>Date Range:</strong> ${dateRange}</p>
+            <p><strong>Vendor Filter:</strong> ${vendor} | <strong>Status Filter:</strong> ${status}</p>
+            <p><strong>Total Purchase Orders:</strong> ${rows.length} | <strong>Total Amount:</strong> Rs. ${totalAmount.toLocaleString()}</p>
+          </div>
+          <h2>Purchase Orders Details</h2>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:5%">S/N</th>
+                <th style="width:10%">PO #</th>
+                <th style="width:12%">Date</th>
+                <th style="width:20%">Vendor</th>
+                <th style="width:15%">Order Status</th>
+                <th style="width:15%">Payment Status</th>
+                <th style="width:15%;text-align:right;">Total Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="total-row">
+                <td colspan="6" style="text-align:right;padding:12px;">GRAND TOTAL</td>
+                <td style="text-align:right;padding:12px;">Rs. ${totalAmount.toLocaleString()}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="margin-top:30px;text-align:center;font-size:11px;color:#999;">
+            <p>This is an automated report. Please verify with procurement records.</p>
+          </div>
+        </body>
+      </html>
     `;
 
     const w = window.open('', '_blank');
-    if (!w || !w.document) { alert('Popup blocked. Allow popups to print.'); return; }
+    if (!w?.document) { alert('Popup blocked. Allow popups to print.'); return; }
     w.document.write(html);
     w.document.close();
     setTimeout(() => w.print(), 250);
   };
 
-  return (
-  <Box sx={{ width: '100%', boxSizing: 'border-box', px: { xs: 1, sm: 2, md: 3 }, mt: 3, pb: 4, backgroundColor: darkMode ? '#121212' : '#fafafa', minHeight: '100vh' }}>
-      <Paper elevation={6} sx={{
-        p: { xs: 1.5, sm: 2.5, md: 4 },
-        borderRadius: { xs: 2, md: 6 },
-        boxShadow: 8,
-        background: darkMode ? 'linear-gradient(135deg, #1e1e1e 0%, #121212 100%)' : 'linear-gradient(135deg, #e3f2fd 0%, #fff 100%)',
-        width: '100%',
-        maxWidth: { xs: '100%', md: 'calc(100vw - 300px)' },
-        mx: 'auto',
-        backgroundColor: darkMode ? '#1e1e1e' : '#fff'
-      }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 2, flexWrap: 'wrap' }}>
-          <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />
-          <Typography variant={isSm ? 'h6' : 'h4'} color="primary" sx={{ fontWeight: 700 }}>Purchase Orders Report</Typography>
-        </Box>
+  // ─── Sub-renders ──────────────────────────────────────────────────────────
+
+  const renderPaymentAdornment = () => ({
+    startAdornment: (
+      <InputAdornment position="start">{editOrder?.currency || 'PKR'}</InputAdornment>
+    ),
+  });
+
+  const renderReadOnlyAmount = (label, value) => (
+    <Grid item xs={12} sm={6}>
+      <TextField
+        fullWidth
+        label={label}
+        value={value || 0}
+        InputProps={{ readOnly: true, ...renderPaymentAdornment() }}
+      />
+    </Grid>
+  );
+
+  const renderDateTimeField = (label, name, disabledWhen) => (
+    <Grid item xs={12} sm={6}>
+      <TextField
+        fullWidth
+        type="datetime-local"
+        name={name}
+        label={label}
+        value={editOrder?.[name] || ''}
+        onChange={handleEditChange}
+        InputLabelProps={{ shrink: true }}
+        disabled={disabledWhen}
+      />
+    </Grid>
+  );
+
+  // ── Edit Dialog ────────────────────────────────────────────────────────────
+
+  const renderEditDialog = () => {
+    const renderSectionHeader = (title) => (
+      <Grid item xs={12}>
+        <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>{title}</Typography>
+        <Divider sx={{ mb: 2 }} />
+      </Grid>
+    );
+
+    // ── Shared input sx for "insufficient payment" error highlight ──
+    const makePaymentFieldSx = (fieldValue) => ({
+      '& .MuiOutlinedInput-root': {
+        '& fieldset':          { borderColor: arePaymentsInsufficient() && fieldValue ? 'error.main' : undefined },
+        '&:hover fieldset':    { borderColor: arePaymentsInsufficient() && fieldValue ? 'error.main' : undefined },
+        '&.Mui-focused fieldset': { borderColor: arePaymentsInsufficient() && fieldValue ? 'error.main' : undefined },
+      },
+      '& .MuiInputLabel-root': { color: arePaymentsInsufficient() && fieldValue ? 'error.main' : undefined },
+    });
+
+    const noSpinnerInputProps = {
+      sx: {
+        '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+        '&[type=number]': { MozAppearance: 'textfield' },
+      },
+    };
+
+    const remainingPaymentField = (
+      <Grid item xs={12} sm={6} md={3}>
         <TextField
-          placeholder="Search by PO Number, Vendor, Status, Date..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          label="Remaining Payment"
+          value={editOrder?.remainingPayment || 0}
           fullWidth
-          sx={{ mb: 2 }}
-          InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment> }}
+          InputProps={{
+            readOnly: true,
+            sx: {
+              color:      arePaymentsInsufficient() ? 'error.main' : 'text.primary',
+              fontWeight: arePaymentsInsufficient() ? 'bold' : 'normal',
+            },
+          }}
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              '& fieldset': { borderColor: arePaymentsInsufficient() ? 'error.main' : undefined },
+            },
+            '& .MuiInputLabel-root': { color: arePaymentsInsufficient() ? 'error.main' : undefined },
+          }}
         />
-        <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-          <TextField select label="Vendor" value={vendorFilter} onChange={e => setVendorFilter(e.target.value)} sx={{ minWidth: 180 }}>
-            <MenuItem value="">All</MenuItem>
-            {vendors?.map(v => (
-              <MenuItem key={v._id} value={v.vendorName}>{v.vendorName}</MenuItem>
-            ))}
-          </TextField>
+      </Grid>
+    );
 
-          <TextField select label="Status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} sx={{ minWidth: 160 }}>
-            <MenuItem value="">All</MenuItem>
-            {defaultStatus.map(s => (
-              <MenuItem key={s} value={s}>{s}</MenuItem>
-            ))}
-          </TextField>
-
+    const renderAdvancePaymentFields = () => (
+      <>
+        <Grid item xs={12} sm={6} md={3}>
           <TextField
-            label="Start Date"
-            type="date"
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
+            label="Advance Amount"
+            name="advanceAmount"
+            value={editOrder?.advanceAmount || ''}
+            onChange={handleEditChange}
+            type="number"
+            fullWidth
+            required
+            sx={makePaymentFieldSx(editOrder?.advanceAmount)}
+            inputProps={noSpinnerInputProps}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Advance Payment Date & Time"
+            name="advancePaymentDateTime"
+            value={editOrder?.advancePaymentDateTime || ''}
+            onChange={handleEditChange}
+            type="datetime-local"
+            fullWidth
+            InputLabelProps={{ shrink: true }}
+            required
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Final Payment"
+            name="finalPayment"
+            value={editOrder?.finalPayment || ''}
+            onChange={handleEditChange}
+            type="number"
+            fullWidth
+            sx={{
+              ...makePaymentFieldSx(editOrder?.finalPayment),
+              '& .MuiInputBase-input': { color: 'red' },
+            }}
+            inputProps={noSpinnerInputProps}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Final Payment Date & Time"
+            name="finalPaymentDateTime"
+            value={editOrder?.finalPaymentDateTime || ''}
+            onChange={handleEditChange}
+            type="datetime-local"
+            fullWidth
             InputLabelProps={{ shrink: true }}
           />
+        </Grid>
+        {remainingPaymentField}
+      </>
+    );
 
+    const renderPartialPaymentFields = () => (
+      <>
+        <Grid item xs={12} sm={6} md={3}>
           <TextField
-            label="End Date"
-            type="date"
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
+            label="Initial Payment"
+            name="initialPayment"
+            value={editOrder?.initialPayment || ''}
+            onChange={handleEditChange}
+            type="number"
+            fullWidth
+            required
+            sx={makePaymentFieldSx(editOrder?.initialPayment)}
+            inputProps={noSpinnerInputProps}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Initial Payment Date & Time"
+            name="initialPaymentDateTime"
+            value={editOrder?.initialPaymentDateTime || ''}
+            onChange={handleEditChange}
+            type="datetime-local"
+            fullWidth
+            required
             InputLabelProps={{ shrink: true }}
           />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Final Payment"
+            name="finalPayment"
+            value={editOrder?.finalPayment || ''}
+            onChange={handleEditChange}
+            type="number"
+            fullWidth
+            sx={makePaymentFieldSx(editOrder?.finalPayment)}
+            inputProps={noSpinnerInputProps}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <TextField
+            label="Final Payment Date & Time"
+            name="finalPaymentDateTime"
+            value={editOrder?.finalPaymentDateTime || ''}
+            onChange={handleEditChange}
+            type="datetime-local"
+            fullWidth
+            InputLabelProps={{ shrink: true }}
+          />
+        </Grid>
+        {remainingPaymentField}
+      </>
+    );
 
-          <Button variant="contained" startIcon={<PrintIcon />} onClick={handlePrintReport} sx={{ ml: 'auto' }}>Print Report</Button>
-        </Box>
-        <TableContainer component={Paper} sx={{ mb: 2, width: '100%', overflowX: 'auto' }}>
-          <Table stickyHeader sx={{ minWidth: isSm ? 700 : isMd ? 1000 : 1300, tableLayout: 'auto' }}>
-            <TableHead>
-              <TableRow sx={{ background: darkMode ? '#2a2a2a' : '#e3f2fd' }}>
-                <TableCell>PO Number</TableCell>
-                <TableCell>PO Date</TableCell>
-                <TableCell>Vendor</TableCell>
-                <TableCell>Ship To</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Grand Total</TableCell>
-                {!isSm && <TableCell>Payment Terms</TableCell>}
-                {!isSm && <TableCell>Payment Method</TableCell>}
-                <TableCell>Payment Status</TableCell>
-                {!isSm && <TableCell>Cash Amount</TableCell>}
-                {!isSm && <TableCell>Cash Date & Time</TableCell>}
-                {!isSm && <TableCell>Advance Amount</TableCell>}
-                {!isSm && <TableCell>Advance Date & Time</TableCell>}
-                {!isSm && <TableCell>Initial Payment</TableCell>}
-                {!isSm && <TableCell>Initial Date & Time</TableCell>}
-                <TableCell>Final Payment</TableCell>
-                <TableCell>Final Date & Time</TableCell>
-                <TableCell>Remaining Amount</TableCell>
-                <TableCell>Bank/Cheque Receipt</TableCell>
-                {!isSm && <TableCell>Delivery Location</TableCell>}
-                {!isSm && <TableCell>Created By</TableCell>}
-                <TableCell>Edit</TableCell>
-                <TableCell>Delete</TableCell>
-                {!isSm && <TableCell>PDF</TableCell>}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredOrders.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage).map(order => (
-                <TableRow key={order._id}
-                  ref={el => { if (order.poNumber) rowRefs.current[order.poNumber] = el; }}
-                  sx={{
-                    ...(highlightPo && order.poNumber === highlightPo && Date.now() < highlightUntil
-                      ? {
+    // ── Item totals calculation ──
+    const calculateTotals = () => {
+      let subtotal = 0, taxTotal = 0, discountTotal = 0;
+      editOrder?.items?.forEach((item) => {
+        subtotal      += Number(item.unitPrice) || 0;
+        taxTotal      += Number(item.tax)       || 0;
+        discountTotal += Number(item.discount)  || 0;
+      });
+      const shipping   = Number(editOrder?.shippingCharges) || 0;
+      const grandTotal = subtotal + taxTotal - discountTotal + shipping;
+      return { subtotal, taxTotal, discountTotal, grandTotal, shipping };
+    };
+
+    const totals = calculateTotals();
+
+    // ── Item card styles ──
+    const itemCardSx = {
+      border:     darkMode ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(25,118,210,0.18)',
+      borderRadius: 2,
+      p:          2,
+      mb:         1,
+      background: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(25,118,210,0.02)',
+      position:   'relative',
+    };
+
+    const itemHeaderSx = {
+      display:       'flex',
+      alignItems:    'center',
+      justifyContent:'space-between',
+      mb:            1.5,
+      pb:            1,
+      borderBottom:  darkMode ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(25,118,210,0.12)',
+    };
+
+    return (
+      <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="lg" fullWidth>
+        <DialogTitle sx={{ bgcolor: 'primary.main', color: 'white', display: 'flex', alignItems: 'center' }}>
+          <Typography variant="h5" component="div" sx={{ flexGrow: 1 }}>
+            Edit Purchase Order
+          </Typography>
+        </DialogTitle>
+
+        <DialogContent sx={{ p: 3 }}>
+          <Grid container spacing={{ xs: 2, sm: 3 }} sx={{ width: '100%' }}>
+
+            {/* ── PO Details ── */}
+            {renderSectionHeader('PO Details')}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="PO Number"
+                name="poNumber"
+                value={editOrder?.poNumber || ''}
+                onChange={handleEditChange}
+                fullWidth
+                placeholder="Auto or manual"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Payment Status</InputLabel>
+                <Select
+                  name="paymentStatus"
+                  value={editOrder?.paymentStatus || 'Unpaid'}
+                  label="Payment Status"
+                  onChange={handleEditChange}
+                >
+                  <MenuItem value="Unpaid">Unpaid</MenuItem>
+                  <MenuItem value="Partially Paid">Partially Paid</MenuItem>
+                  <MenuItem value="Paid">Paid</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="PO Date"
+                name="poDate"
+                value={editOrder?.poDate || ''}
+                onChange={handleEditChange}
+                type="date"
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Expected Delivery Date"
+                name="expectedDeliveryDate"
+                value={editOrder?.expectedDeliveryDate || ''}
+                onChange={handleEditChange}
+                type="date"
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Order Status</InputLabel>
+                <Select
+                  name="orderStatus"
+                  value={editOrder?.orderStatus || 'Pending'}
+                  label="Order Status"
+                  onChange={handleEditChange}
+                >
+                  {DEFAULT_STATUS.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Reference/Notes"
+                name="reference"
+                value={editOrder?.reference || ''}
+                onChange={handleEditChange}
+                fullWidth
+                multiline
+                rows={2}
+                placeholder="Optional notes for this PO"
+              />
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Vendor ── */}
+            {renderSectionHeader('Vendor')}
+
+            <Grid item xs={12} sm={6} md={4}>
+              <FormControl fullWidth required>
+                <InputLabel>Vendor</InputLabel>
+                <Select
+                  name="vendorName"
+                  value={editOrder?.vendorName || ''}
+                  label="Vendor"
+                  onChange={handleEditChange}
+                >
+                  {vendors?.map((v) => (
+                    <MenuItem key={v._id} value={v.vendorName}>{v.vendorName}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <TextField
+                label="Vendor ID"
+                name="vendorId"
+                value={editOrder?.vendorId || ''}
+                InputProps={{ readOnly: true }}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <TextField
+                label="Vendor Address"
+                name="vendorAddress"
+                value={editOrder?.vendorAddress || ''}
+                onChange={handleEditChange}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Vendor Phone"
+                name="vendorPhone"
+                value={editOrder?.vendorPhone || ''}
+                onChange={handleEditChange}
+                fullWidth
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Vendor Email"
+                name="vendorEmail"
+                value={editOrder?.vendorEmail || ''}
+                onChange={handleEditChange}
+                fullWidth
+              />
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Ship To ── */}
+            {renderSectionHeader('Ship To')}
+
+            <Grid item xs={12} sm={6} md={4}>
+              <TextField
+                label="Contact Person Name"
+                name="shipToName"
+                value={editOrder?.shipToName || ''}
+                onChange={handleEditChange}
+                fullWidth
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <TextField
+                label="Contact Number"
+                name="shipToPhone"
+                value={editOrder?.shipToPhone || ''}
+                onChange={handleEditChange}
+                fullWidth
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <TextField
+                label="Email"
+                name="shipToEmail"
+                type="email"
+                value={editOrder?.shipToEmail || ''}
+                onChange={handleEditChange}
+                fullWidth
+                required
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Shipping Address"
+                name="shipToAddress"
+                value={editOrder?.shipToAddress || ''}
+                onChange={handleEditChange}
+                fullWidth
+                multiline
+                rows={2}
+                required
+              />
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Line Items ── */}
+            <Grid item xs={12}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }} gutterBottom>Items</Typography>
+              <Divider sx={{ mb: 2 }} />
+            </Grid>
+
+            {editOrder?.items?.map((item, idx) => (
+              <Grid item xs={12} key={idx}>
+                <Box sx={itemCardSx}>
+                  {/* Item header */}
+                  <Box sx={itemHeaderSx}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{
+                        width: 28, height: 28, borderRadius: '50%',
+                        bgcolor: 'primary.main', color: '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 700, fontSize: '0.8rem', flexShrink: 0,
+                      }}>
+                        {idx + 1}
+                      </Box>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'primary.main' }}>
+                        Item {idx + 1}
+                      </Typography>
+                      {item.itemCode && (
+                        <Chip
+                          label={item.itemCode}
+                          size="small"
+                          variant="outlined"
+                          color="primary"
+                          sx={{ ml: 0.5 }}
+                        />
+                      )}
+                    </Box>
+                    <IconButton
+                      color="error"
+                      size="small"
+                      onClick={() => {
+                        const items = editOrder.items.filter((_, i) => i !== idx);
+                        handleEditChange({ target: { name: 'items', value: items } });
+                      }}
+                      disabled={editOrder.items.length === 1}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+
+                  {/* Item fields */}
+                  <Grid container spacing={2}>
+
+                    {/* Row 1: Source + SKU + Name + Description */}
+                    <Grid item xs={12} sm={6} md={3}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Item Source</InputLabel>
+                        <Select
+                          value={item.itemSource || 'AdminProductList'}
+                          label="Item Source"
+                          onChange={(e) => handleItemSourceChange(idx, e.target.value)}
+                        >
+                          <MenuItem value="AdminProductList">From AdminProductList</MenuItem>
+                          <MenuItem value="NewProduct">New Product</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      {item.itemSource === 'AdminProductList' ? (
+                        <FormControl fullWidth size="small" required>
+                          <InputLabel>Item Code / SKU</InputLabel>
+                          <Select
+                            value={item.itemCode || ''}
+                            label="Item Code / SKU"
+                            onChange={(e) => {
+                              const selectedSKU     = e.target.value;
+                              const selectedProduct = products.find((p) => p.SKU === selectedSKU);
+                              const items           = [...editOrder.items];
+                              items[idx] = {
+                                ...items[idx],
+                                itemCode: selectedSKU,
+                                ...(selectedProduct ? {
+                                  itemName:        selectedProduct.name          || '',
+                                  description:     selectedProduct.category      || '',
+                                  perPiecePrice:   selectedProduct.costPerPiece  || '',
+                                  piecesPerCarton: selectedProduct.piecesPerCarton || '',
+                                } : {}),
+                              };
+                              if (selectedProduct?.costPerPiece) {
+                                const qty      = Number(items[idx].quantityOrdered) || 0;
+                                const perPiece = Number(selectedProduct.costPerPiece) || 0;
+                                items[idx].unitPrice = (qty * perPiece).toFixed(2);
+                              }
+                              handleEditChange({ target: { name: 'items', value: items } });
+                            }}
+                          >
+                            {products
+                              .filter((product) =>
+                                !editOrder.vendorName || product.vendor === editOrder.vendorName
+                              )
+                              .map((product) => (
+                                <MenuItem key={product._id || product.SKU} value={product.SKU}>
+                                  {product.SKU} - {product.name}
+                                </MenuItem>
+                              ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          label="Item Code / SKU"
+                          value={item.itemCode || ''}
+                          size="small"
+                          fullWidth
+                          required
+                          onChange={(e) => handleEditItemFieldChange(idx, 'itemCode', e.target.value)}
+                        />
+                      )}
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      <TextField
+                        label="Item Name"
+                        value={item.itemName || ''}
+                        size="small"
+                        fullWidth
+                        required
+                        onChange={(e) => handleEditItemFieldChange(idx, 'itemName', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      <TextField
+                        label="Description"
+                        value={item.description || ''}
+                        size="small"
+                        fullWidth
+                        onChange={(e) => handleEditItemFieldChange(idx, 'description', e.target.value)}
+                      />
+                    </Grid>
+
+                    {/* Row 2: Carton Qty + Pcs/Carton + Lose Pcs + Total Qty + UOM */}
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Carton Qty"
+                        value={item.cartonQuantity ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        inputProps={{ min: 0, sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'cartonQuantity', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Pcs / Carton"
+                        value={item.piecesPerCarton ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        inputProps={{ min: 0, sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'piecesPerCarton', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Lose Pcs"
+                        value={item.losePieces ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        inputProps={{ min: 0, sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'losePieces', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Total Qty"
+                        value={item.quantityOrdered ?? 0}
+                        size="small"
+                        fullWidth
+                        InputProps={{ readOnly: true }}
+                        helperText="Auto-calculated"
+                        sx={{ '& .MuiInputBase-input': { color: 'primary.main', fontWeight: 700 } }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>UOM</InputLabel>
+                        <Select
+                          value={item.uom || 'pieces'}
+                          label="UOM"
+                          onChange={(e) => handleEditItemFieldChange(idx, 'uom', e.target.value)}
+                        >
+                          {DEFAULT_UOM.map((u) => <MenuItem key={u} value={u}>{u}</MenuItem>)}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    {/* Row 3: Per Piece Price + Unit Price + Tax + Discount */}
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Per Piece Price"
+                        value={item.perPiecePrice ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        required
+                        inputProps={{ sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'perPiecePrice', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Unit Price"
+                        value={item.unitPrice ?? ''}
+                        size="small"
+                        fullWidth
+                        InputProps={{ readOnly: true }}
+                        sx={{ '& .MuiInputBase-input': { fontWeight: 700 } }}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Tax (%)"
+                        value={item.tax ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        inputProps={{ sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'tax', e.target.value)}
+                      />
+                    </Grid>
+
+                    <Grid item xs={6} sm={4} md={2}>
+                      <TextField
+                        label="Discount"
+                        value={item.discount ?? ''}
+                        size="small"
+                        type="number"
+                        fullWidth
+                        inputProps={{ sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+                        onChange={(e) => handleEditItemFieldChange(idx, 'discount', e.target.value)}
+                      />
+                    </Grid>
+
+                    {/* Re-open Add Product dialog if source is NewProduct and no code yet */}
+                    {item.itemSource === 'NewProduct' && !item.itemCode && (
+                      <Grid item xs={12} sm={6} md={2}>
+                        <Button
+                          variant="outlined"
+                          color="primary"
+                          fullWidth
+                          startIcon={<AddIcon />}
+                          onClick={() => {
+                            setAddProductTargetIdx(idx);
+                            setAddProductDialogOpen(true);
+                          }}
+                          sx={{ height: '56px', borderRadius: 2, borderStyle: 'dashed' }}
+                        >
+                          Fill Product Info
+                        </Button>
+                      </Grid>
+                    )}
+
+                  </Grid>
+                </Box>
+              </Grid>
+            ))}
+
+            <Grid item xs={12}>
+              <Button
+                startIcon={<AddIcon />}
+                onClick={addEditItem}
+                variant="outlined"
+                color="primary"
+                sx={{
+                  borderStyle: 'dashed',
+                  '&:hover': { borderStyle: 'solid' },
+                  transition: 'all 0.2s',
+                }}
+              >
+                Add Item
+              </Button>
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Totals ── */}
+            {renderSectionHeader('Totals')}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Subtotal"       value={totals.subtotal.toFixed(2)}      fullWidth InputProps={{ readOnly: true }} />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Tax Total"      value={totals.taxTotal.toFixed(2)}      fullWidth InputProps={{ readOnly: true }} />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Shipping Charges"
+                name="shippingCharges"
+                type="number"
+                value={editOrder?.shippingCharges || ''}
+                onChange={handleEditChange}
+                fullWidth
+                inputProps={{
+                  min: 0,
+                  step: '0.01',
+                  sx: {
+                    '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' },
+                    '&[type=number]': { MozAppearance: 'textfield' },
+                  },
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Discount Total" value={totals.discountTotal.toFixed(2)} fullWidth InputProps={{ readOnly: true }} />
+            </Grid>
+            <Grid item xs={12} sm={6} md={6}>
+              <TextField
+                label="Grand Total"
+                value={totals.grandTotal.toFixed(2)}
+                fullWidth
+                InputProps={{
+                  readOnly: true,
+                  sx: { fontSize: '1.25rem', fontWeight: 'bold', '& input': { textAlign: 'right' } },
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={6}>
+              <TextField
+                label="Calculated Status"
+                value={editOrder?.paymentStatus || 'Unpaid'}
+                fullWidth
+                InputProps={{ readOnly: true }}
+              />
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Payment & Delivery ── */}
+            {renderSectionHeader('Payment & Delivery')}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Payment Terms</InputLabel>
+                <Select
+                  name="paymentTerms"
+                  value={editOrder?.paymentTerms || ''}
+                  label="Payment Terms"
+                  onChange={handleEditChange}
+                >
+                  {['Net 30', 'Net 60', 'COD', 'Advance Payment', 'Partial Payment', 'Cash Payment'].map((t) => (
+                    <MenuItem key={t} value={t}>{t}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            {['Net 30', 'Net 60'].includes(editOrder?.paymentTerms) && (
+              <Grid item xs={12} sm={6} md={3}>
+                <TextField
+                  label="Due Date"
+                  name="dueDate"
+                  value={editOrder?.dueDate || ''}
+                  type="date"
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  InputProps={{ readOnly: true }}
+                />
+              </Grid>
+            )}
+
+            {editOrder?.paymentTerms === 'Advance Payment' && renderAdvancePaymentFields()}
+            {editOrder?.paymentTerms === 'Partial Payment' && renderPartialPaymentFields()}
+
+            {editOrder?.paymentTerms === 'Cash Payment' && (
+              <>
+                <Grid item xs={12} sm={6} md={3}>
+                  <TextField
+                    label="Cash Paid"
+                    name="cashPaid"
+                    value={editOrder?.cashPaid || ''}
+                    onChange={handleEditChange}
+                    type="number"
+                    fullWidth
+                    required
+                    sx={makePaymentFieldSx(editOrder?.cashPaid)}
+                    inputProps={noSpinnerInputProps}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <TextField
+                    label="Cash Payment Date & Time"
+                    name="cashPaymentDateTime"
+                    value={editOrder?.cashPaymentDateTime || ''}
+                    onChange={handleEditChange}
+                    type="datetime-local"
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                {remainingPaymentField}
+              </>
+            )}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Payment Method</InputLabel>
+                <Select
+                  name="paymentMethod"
+                  value={editOrder?.paymentMethod || ''}
+                  label="Payment Method"
+                  onChange={handleEditChange}
+                  required
+                >
+                  <MenuItem value=""><em>Select Payment Method</em></MenuItem>
+                  {PAYMENT_METHOD_OPTIONS.map((m) => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            {editOrder?.paymentMethod === 'Bank Transfer' && (
+              <Grid item xs={12} sm={6} md={3}>
+                <TextField
+                  name="bankReceipt"
+                  label="Upload Bank Receipt (PNG/JPG/PDF)"
+                  type="file"
+                  inputProps={{ accept: '.png,.jpg,.jpeg,.pdf' }}
+                  onChange={(e) => handleEditFileUpload(e, 'bankReceipt')}
+                  fullWidth
+                />
+              </Grid>
+            )}
+
+            {editOrder?.paymentMethod === 'Cheque' && (
+              <Grid item xs={12} sm={6} md={3}>
+                <TextField
+                  name="chequeReceipt"
+                  label="Upload Cheque (PNG/JPG/PDF)"
+                  type="file"
+                  inputProps={{ accept: '.png,.jpg,.jpeg,.pdf' }}
+                  onChange={(e) => handleEditFileUpload(e, 'chequeReceipt')}
+                  fullWidth
+                />
+              </Grid>
+            )}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Delivery Method</InputLabel>
+                <Select
+                  name="deliveryMethod"
+                  value={editOrder?.deliveryMethod || ''}
+                  label="Delivery Method"
+                  onChange={handleEditChange}
+                >
+                  {DEFAULT_DELIVERY_METHODS.map((m) => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Delivery Location/Warehouse"
+                name="deliveryLocation"
+                value={editOrder?.deliveryLocation || ''}
+                onChange={handleEditChange}
+                fullWidth
+              />
+            </Grid>
+
+            <Divider sx={{ my: 1.5, width: '100%' }} />
+
+            {/* ── Review & Metadata ── */}
+            {renderSectionHeader('Review & Metadata')}
+
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Created By"       name="createdBy"       value={editOrder?.createdBy       || ''} onChange={handleEditChange} fullWidth />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Approved By"      name="approvedBy"      value={editOrder?.approvedBy      || ''} onChange={handleEditChange} fullWidth />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField label="Advance Approved By" name="advanceApprovedBy" value={editOrder?.advanceApprovedBy || ''} onChange={handleEditChange} fullWidth />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <TextField
+                label="Credit Amount"
+                name="creditAmount"
+                value={editOrder?.creditAmount || ''}
+                onChange={handleEditChange}
+                type="number"
+                fullWidth
+                inputProps={{ sx: { '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': { display: 'none' }, '&[type=number]': { MozAppearance: 'textfield' } } }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Purchase Type</InputLabel>
+                <Select
+                  name="purchaseType"
+                  value={editOrder?.purchaseType || 'Local'}
+                  label="Purchase Type"
+                  onChange={handleEditChange}
+                >
+                  {DEFAULT_PURCHASE_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Currency</InputLabel>
+                <Select
+                  name="currency"
+                  value={editOrder?.currency || 'PKR'}
+                  label="Currency"
+                  onChange={handleEditChange}
+                >
+                  {DEFAULT_CURRENCY.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                </Select>
+              </FormControl>
+            </Grid>
+
+          </Grid>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 3 }}>
+          <Button onClick={() => setEditOpen(false)} variant="outlined" color="inherit">
+            Cancel
+          </Button>
+          <Button onClick={handleEditSave} variant="contained" color="primary" size="large">
+            Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
+    );
+  };
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  const paginatedOrders = filteredOrders.slice(page * ROWS_PER_PAGE, (page + 1) * ROWS_PER_PAGE);
+  const totalPages      = Math.ceil(filteredOrders.length / ROWS_PER_PAGE);
+
+  return (
+    <Fade in timeout={500}>
+      <Box sx={{
+        maxWidth:   { xs: '100%', lg: 1800 },
+        minWidth:   0,
+        boxSizing:  'border-box',
+        overflowX:  'hidden',
+        px:         { xs: 1, sm: 1, md: 2 },
+        mt:         { xs: 1, sm: 2, md: 1 },
+        pb:         1,
+        background: `linear-gradient(135deg, ${darkMode ? '#1a1a2e' : '#f8f9fa'} 0%, ${darkMode ? '#16213e' : '#e9ecef'} 100%)`,
+        minHeight:  '100vh',
+        mx:         'auto',
+        position:   'relative',
+        '&::before': {
+          content:    '""',
+          position:   'absolute',
+          top: 0, left: 0, right: 0,
+          height:     '4px',
+          background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 50%, #1976d2 100%)',
+          zIndex:     1,
+        },
+      }}>
+        <Paper elevation={6} sx={{
+          p:          { xs: 1, sm: 2, md: 4 },
+          borderRadius:{ xs: 3, sm: 2, md: 6 },
+          background: `linear-gradient(135deg, ${darkMode ? '#2a2a2a' : '#ffffff'} 0%, ${darkMode ? '#1e1e1e' : '#f8f9fa'} 100%)`,
+          boxShadow:  '0 20px 40px rgba(0,0,0,0.15), 0 10px 20px rgba(0,0,0,0.1)',
+          maxWidth:   { xs: 'calc(90vw - 16px)', sm: '100%', md: 'calc(106vw - 300px)' },
+          width:      '100%',
+          overflowX:  'hidden',
+          overflowY:  'visible',
+          mx:         'auto',
+          minWidth:   0,
+          position:   'relative',
+          border:     `1px solid ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}`,
+          '&::before': {
+            content:     '""',
+            position:    'absolute',
+            top: 0, left: 0, right: 0,
+            height:      '3px',
+            background:  'linear-gradient(90deg, #1976d2 0%, #42a5f5 50%, #1976d2 100%)',
+            borderRadius:'3px 3px 0 0',
+          },
+        }}>
+
+          {/* ── Header ── */}
+          <Box sx={{
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'space-between',
+            mb:             { xs: 1.5, sm: 2 },
+            gap:            { xs: 1, sm: 2 },
+            flexWrap:       'wrap',
+            flexDirection:  { xs: 'column', sm: 'row' },
+            textAlign:      { xs: 'center', sm: 'left' },
+            p:              { xs: 2, sm: 3 },
+            borderRadius:   { xs: 2, sm: 3 },
+            background: `linear-gradient(135deg, ${darkMode ? 'rgba(25,118,210,0.1)' : 'rgba(255,255,255,0.9)'} 0%, ${darkMode ? 'rgba(66,165,245,0.05)' : 'rgba(248,249,250,0.8)'} 100%)`,
+            backdropFilter: 'blur(10px)',
+            border:   `1px solid ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}`,
+            boxShadow:'0 8px 32px rgba(0,0,0,0.1)',
+            position: 'relative',
+            overflow: 'hidden',
+          }}>
+            <img
+              src={process.env.PUBLIC_URL + '/Inventory logo.png'}
+              alt="Inventory Logo"
+              style={{ height: 40, marginRight: 12 }}
+            />
+            <Typography
+              variant={isSm ? 'h6' : 'h4'}
+              color="primary"
+              sx={{ fontWeight: 700, fontSize: { xs: '1.1rem', sm: '1.5rem', md: '2rem' } }}
+            >
+              Purchase Orders Report
+            </Typography>
+          </Box>
+
+          {/* ── Search ── */}
+          <TextField
+            placeholder="Search by PO Number, Vendor, Status, Date..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            fullWidth
+            sx={{ mb: 2, '& .MuiInputBase-root': { fontSize: { xs: '0.875rem', sm: '1rem' } } }}
+            InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment> }}
+          />
+
+          {/* ── Filters ── */}
+          <Box sx={{
+            display:             'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(6, auto)' },
+            gap:                 { xs: 1.5, sm: 2 },
+            mb:                  2,
+            alignItems:          'center',
+          }}>
+            <TextField
+              select
+              label="Vendor"
+              value={vendorFilter}
+              onChange={(e) => setVendorFilter(e.target.value)}
+              size={isSm ? 'small' : 'medium'}
+              sx={{ width: '100%' }}
+            >
+              <MenuItem value="">All</MenuItem>
+              {vendors?.map((v) => <MenuItem key={v._id} value={v.vendorName}>{v.vendorName}</MenuItem>)}
+            </TextField>
+
+            <TextField
+              select
+              label="Status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              size={isSm ? 'small' : 'medium'}
+              sx={{ width: '100%' }}
+            >
+              <MenuItem value="">All</MenuItem>
+              {DEFAULT_STATUS.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+            </TextField>
+
+            <TextField
+              label="Start Date"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              size={isSm ? 'small' : 'medium'}
+              sx={{ width: '100%' }}
+            />
+            <TextField
+              label="End Date"
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              size={isSm ? 'small' : 'medium'}
+              sx={{ width: '100%' }}
+            />
+
+            <Button
+              variant="contained"
+              startIcon={<PrintIcon />}
+              onClick={handlePrintReport}
+              sx={{
+                gridColumn: { xs: '1', sm: 'span 2', md: 'auto' },
+                width:      { xs: '100%', sm: '200px' },
+                py:         { xs: 1, sm: 1.5 },
+                background: darkMode
+                  ? 'linear-gradient(45deg, #90caf9, #64b5f6)'
+                  : 'linear-gradient(45deg, #1976d2, #42a5f5)',
+                color:     '#fff',
+                boxShadow: darkMode
+                  ? '0 4px 15px rgba(144,202,249,0.3)'
+                  : '0 4px 15px rgba(25,118,210,0.3)',
+                '&:hover': {
+                  background: darkMode
+                    ? 'linear-gradient(45deg, #64b5f6, #42a5f5)'
+                    : 'linear-gradient(45deg, #1565c0, #2196f3)',
+                  transform: 'translateY(-1px)',
+                },
+                transition: 'all 0.3s ease',
+              }}
+            >
+              Print Report
+            </Button>
+          </Box>
+
+          {/* ── Table ── */}
+          <TableContainer component={Paper} sx={{
+            mb:         2,
+            width:      '100%',
+            maxWidth:   { xs: 'calc(80vw - 10px)', sm: '100%', md: 'calc(103vw - 300px)' },
+            minWidth:   0,
+            overflowX:  'auto',
+            overflowY:  'hidden',
+            WebkitOverflowScrolling: 'touch',
+            position:   'relative',
+            borderRadius: 2,
+            boxSizing:  'border-box',
+            border:     `1px solid ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'}`,
+            '&::-webkit-scrollbar':       { height: { xs: '4px', sm: '6px' } },
+            '&::-webkit-scrollbar-track': { backgroundColor: darkMode ? '#2a2a2a' : '#f1f1f1', borderRadius: '3px' },
+            '&::-webkit-scrollbar-thumb': { backgroundColor: darkMode ? '#555'    : '#888',    borderRadius: '3px' },
+          }}>
+            <Table
+              stickyHeader
+              sx={{
+                minWidth:    { xs: 100, sm: 900, md: 1000, lg: 1200 },
+                width:       '100%',
+                tableLayout: 'auto',
+                whiteSpace:  'nowrap',
+                minHeight:   1,
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{
+                    ...headerCellSx,
+                    position:        'sticky',
+                    left:            0,
+                    backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                    zIndex:          3,
+                    boxShadow:       '2px 0 5px -2px rgba(0,0,0,0.1)',
+                    fontWeight:      'bold',
+                    minWidth:        { xs: 100, sm: 120 },
+                  }}>
+                    PO Number
+                  </TableCell>
+                  {[
+                    'PO Date', 'Vendor', 'Ship To', 'Status', 'Grand Total',
+                    'Payment Terms', 'Payment Method', 'Payment Status',
+                    'Cash Amount', 'Cash Date & Time',
+                    'Advance Amount', 'Advance Date & Time',
+                    'Initial Payment', 'Initial Date & Time',
+                    'Final Payment', 'Final Date & Time',
+                    'Remaining Amount', 'Bank/Cheque Receipt',
+                    'Delivery Location', 'Created By',
+                    'Edit', 'Delete', 'PDF',
+                  ].map((col) => (
+                    <TableCell key={col} sx={headerCellSx}>{col}</TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+
+              <TableBody>
+                {paginatedOrders.map((order) => {
+                  const isHighlighted = highlightPo && order.poNumber === highlightPo && Date.now() < highlightUntil;
+                  const statusColor   = getStatusColor(order.orderStatus);
+                  const remaining     = (
+                    Number(order.grandTotal     || 0) -
+                    Number((order.cashPaid ?? order.cashAmount) || 0) -
+                    Number(order.initialPayment || 0) -
+                    Number(order.advanceAmount  || 0) -
+                    Number(order.finalPayment   || 0)
+                  ).toFixed(2);
+
+                  return (
+                    <TableRow
+                      key={order._id}
+                      ref={(el) => { if (order.poNumber) rowRefs.current[order.poNumber] = el; }}
+                      sx={{
+                        ...(isHighlighted ? {
                           animation: 'blinkBg 1s linear infinite',
                           '@keyframes blinkBg': {
-                            '0%': { backgroundColor: '#fffde7' },
-                            '50%': { backgroundColor: '#fff59d' },
-                            '100%': { backgroundColor: '#fffde7' }
-                          }
-                        }
-                      : {})
-                  }}
-                >
-                  <TableCell sx={cellSx} title={order.poNumber}>{order.poNumber}</TableCell>
-                  <TableCell sx={cellSx} title={order.poDate?.slice(0,10)}>{order.poDate?.slice(0,10)}</TableCell>
-                  <TableCell sx={cellSx} title={order.vendorName}>{order.vendorName || 'N/A'}</TableCell>
-                  <TableCell sx={cellSx} title={order.shipToName}>{order.shipToName || 'N/A'}</TableCell>
-                  <TableCell>
-                    <Box 
-                      sx={{
-                        display: 'inline-block',
-                        padding: '4px 8px',
-                        borderRadius: '12px',
-                        backgroundColor: 
-                          order.orderStatus === 'Approved' ? 'rgba(46, 125, 50, 0.1)' :
-                          order.orderStatus === 'Pending' ? 'rgba(251, 140, 0, 0.1)' :
-                          order.orderStatus === 'Cancelled' ? 'rgba(198, 40, 40, 0.1)' :
-                          'rgba(30, 136, 229, 0.1)',
-                        color: 
-                          order.orderStatus === 'Approved' ? '#2e7d32' :
-                          order.orderStatus === 'Pending' ? '#fb8c00' :
-                          order.orderStatus === 'Cancelled' ? '#c62828' :
-                          '#1e88e5',
-                        fontWeight: '500',
-                        fontSize: '0.75rem',
-                        textTransform: 'capitalize'
+                            '0%':   { backgroundColor: '#fffde7' },
+                            '50%':  { backgroundColor: '#fff59d' },
+                            '100%': { backgroundColor: '#fffde7' },
+                          },
+                        } : {}),
+                        '&:hover': { backgroundColor: darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' },
                       }}
                     >
-                      {order.orderStatus || 'Pending'}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ fontWeight: 'bold', minWidth: 140 }}>Rs{Number(order.grandTotal || 0).toFixed(2)}</TableCell>
-                  {!isSm && <TableCell sx={cellSx} title={order.paymentTerms}>{order.paymentTerms || 'N/A'}</TableCell>}
-                  {!isSm && <TableCell sx={cellSx} title={order.paymentMethod}>{order.paymentMethod || 'N/A'}</TableCell>}
-                  <TableCell sx={{ minWidth: 120 }}>{order.paymentStatus || 'Unpaid'}</TableCell>
-                  {!isSm && <TableCell sx={{ minWidth: 120 }}>Rs{Number((order.cashPaid ?? order.cashAmount) || 0).toFixed(2)}</TableCell>}
-                  {!isSm && (
-                    <TableCell sx={{ minWidth: 160 }}>
-                      {order.cashPaymentDateTime ? (
-                        <Box sx={{ fontSize: '0.75rem' }}>
-                          <Box>{new Date(order.cashPaymentDateTime).toLocaleDateString()}</Box>
-                          <Box sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
-                            {new Date(order.cashPaymentDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {/* Sticky PO Number column */}
+                      <TableCell
+                        sx={{
+                          ...cellSx,
+                          position:        'sticky',
+                          left:            0,
+                          backgroundColor: darkMode ? '#1e1e1e' : '#fff',
+                          zIndex:          1,
+                          boxShadow:       '2px 0 5px -2px rgba(0,0,0,0.1)',
+                          fontWeight:      'medium',
+                        }}
+                        title={order.poNumber}
+                      >
+                        {order.poNumber}
+                      </TableCell>
+
+                      <TableCell sx={cellSx} title={order.poDate?.slice(0, 10)}>{order.poDate?.slice(0, 10)}</TableCell>
+                      <TableCell sx={cellSx} title={order.vendorName}>{order.vendorName  || 'N/A'}</TableCell>
+                      <TableCell sx={cellSx} title={order.shipToName}>{order.shipToName  || 'N/A'}</TableCell>
+
+                      {/* Status badge */}
+                      <TableCell>
+                        <Box sx={{
+                          display:         'inline-block',
+                          padding:         '4px 8px',
+                          borderRadius:    '12px',
+                          backgroundColor: `${statusColor}1A`,
+                          color:           statusColor,
+                          fontWeight:      500,
+                          fontSize:        '0.75rem',
+                          textTransform:   'capitalize',
+                          whiteSpace:      'nowrap',
+                        }}>
+                          {order.orderStatus || 'Pending'}
+                        </Box>
+                      </TableCell>
+
+                      <TableCell sx={{ fontWeight: 'bold', minWidth: 140 }}>
+                        Rs{Number(order.grandTotal || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell sx={cellSx} title={order.paymentTerms}>{order.paymentTerms  || 'N/A'}</TableCell>
+                      <TableCell sx={cellSx} title={order.paymentMethod}>{order.paymentMethod || 'N/A'}</TableCell>
+                      <TableCell sx={{ minWidth: 120 }}>{order.paymentStatus || 'Unpaid'}</TableCell>
+                      <TableCell sx={{ minWidth: 120 }}>Rs{Number((order.cashPaid ?? order.cashAmount) || 0).toFixed(2)}</TableCell>
+                      <TableCell sx={{ minWidth: 160 }}>{formatDateTimeCell(order.cashPaymentDateTime)}</TableCell>
+                      <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.advanceAmount  || 0).toFixed(2)}</TableCell>
+                      <TableCell sx={{ minWidth: 140 }}>{formatDateTimeCell(order.advancePaymentDateTime || order.advanceDateTime)}</TableCell>
+                      <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.initialPayment || 0).toFixed(2)}</TableCell>
+                      <TableCell sx={{ minWidth: 140 }}>{formatDateTimeCell(order.initialPaymentDateTime)}</TableCell>
+                      <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.finalPayment   || 0).toFixed(2)}</TableCell>
+                      <TableCell sx={{ minWidth: 140 }}>{formatDateTimeCell(order.finalPaymentDateTime)}</TableCell>
+                      <TableCell sx={{ minWidth: 140 }}>Rs{remaining}</TableCell>
+
+                      {/* Attachments */}
+                      <TableCell>
+                        {(order.bankReceipt || order.chequeReceipt || order.attachments?.length > 0) ? (
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {order.bankReceipt && (
+                              <Button variant="outlined" size="small" onClick={() => window.open(order.bankReceipt, '_blank')}>Bank</Button>
+                            )}
+                            {order.chequeReceipt && (
+                              <Button variant="outlined" size="small" onClick={() => window.open(order.chequeReceipt, '_blank')}>Cheque</Button>
+                            )}
+                            {order.attachments
+                              ?.filter((u) => u !== order.bankReceipt && u !== order.chequeReceipt)
+                              .map((url, i) => (
+                                <Button key={i} variant="outlined" size="small" onClick={() => window.open(url, '_blank')}>
+                                  File {i + 1}
+                                </Button>
+                              ))}
                           </Box>
-                        </Box>
-                      ) : '-'}
-                    </TableCell>
-                  )}
-                  {!isSm && <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.advanceAmount || 0).toFixed(2)}</TableCell>}
-                  {!isSm && (
-                    <TableCell sx={{ minWidth: 140 }}>
-                      {(order.advancePaymentDateTime || order.advanceDateTime) ? (
-                        <Box sx={{ fontSize: '0.75rem' }}>
-                          <Box>{new Date(order.advancePaymentDateTime || order.advanceDateTime).toLocaleDateString()}</Box>
-                          <Box sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
-                            {new Date(order.advancePaymentDateTime || order.advanceDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </Box>
-                        </Box>
-                      ) : '-'}
-                    </TableCell>
-                  )}
-                  {!isSm && <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.initialPayment || 0).toFixed(2)}</TableCell>}
-                  {!isSm && (
-                    <TableCell sx={{ minWidth: 140 }}>
-                      {order.initialPaymentDateTime ? (
-                        <Box sx={{ fontSize: '0.75rem' }}>
-                          <Box>{new Date(order.initialPaymentDateTime).toLocaleDateString()}</Box>
-                          <Box sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
-                            {new Date(order.initialPaymentDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </Box>
-                        </Box>
-                      ) : '-'}
-                    </TableCell>
-                  )}
-                  <TableCell sx={{ minWidth: 120 }}>Rs{Number(order.finalPayment || 0).toFixed(2)}</TableCell>
-                  <TableCell sx={{ minWidth: 140 }}>
-                    {order.finalPaymentDateTime ? (
-                      <Box sx={{ fontSize: '0.75rem' }}>
-                        <Box>{new Date(order.finalPaymentDateTime).toLocaleDateString()}</Box>
-                        <Box sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
-                          {new Date(order.finalPaymentDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </Box>
-                      </Box>
-                    ) : '-'}
-                  </TableCell>
-                  <TableCell sx={{ minWidth: 140 }}>Rs{(
-                    Number(order.grandTotal || 0)
-                    - Number((order.cashPaid ?? order.cashAmount) || 0)
-                    - Number(order.initialPayment || 0)
-                    - Number(order.advanceAmount || 0)
-                    - Number(order.finalPayment || 0)
-                  ).toFixed(2)}</TableCell>
-                  <TableCell>
-                    {(order.bankReceipt || order.chequeReceipt || (order.attachments && order.attachments.length > 0)) ? (
-                      <>
-                        {order.bankReceipt && (
-                          <Button variant="outlined" size="small" sx={{ mr: 1 }} onClick={() => window.open(order.bankReceipt, '_blank')}>
-                            Bank Receipt
-                          </Button>
-                        )}
-                        {order.chequeReceipt && (
-                          <Button variant="outlined" size="small" sx={{ mr: 1 }} onClick={() => window.open(order.chequeReceipt, '_blank')}>
-                            Cheque Receipt
-                          </Button>
-                        )}
-                        {/* Show other attachments that are not the bank/cheque receipts */}
-                        {order.attachments && order.attachments.filter(url => url !== order.bankReceipt && url !== order.chequeReceipt).map((fileUrl, idx) => (
-                          <Button key={idx} variant="outlined" size="small" sx={{ mr: 1 }} onClick={() => window.open(fileUrl, '_blank')}>
-                            View {idx + 1}
-                          </Button>
-                        ))}
-                      </>
-                    ) : '-'}
-                  </TableCell>
-                  {!isSm && <TableCell sx={cellSx} title={order.deliveryLocation}>{order.deliveryLocation}</TableCell>}
-                  {!isSm && <TableCell sx={cellSx} title={order.createdBy}>{order.createdBy}</TableCell>}
-                  <TableCell>
-                    <IconButton onClick={() => handleEdit(order)}><EditIcon /></IconButton>
-                  </TableCell>
-                  <TableCell>
-                    <IconButton color="error" onClick={() => handleDelete(order._id)}><DeleteIcon /></IconButton>
-                  </TableCell>
-                  <TableCell>
-                    <IconButton color="primary" onClick={() => handleDownloadPDF(order)}><PictureAsPdfIcon /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        {/* Pagination */}
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', mb: 2 }}>
-          <Button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>
-          <Typography sx={{ mx: 2 }}>Page {page + 1} of {Math.ceil(filteredOrders.length / rowsPerPage)}</Typography>
-          <Button disabled={page >= Math.ceil(filteredOrders.length / rowsPerPage) - 1} onClick={() => setPage(page + 1)}>Next</Button>
-        </Box>
-        {renderEditDialog()}
-      </Paper>
-    </Box>
+                        ) : '-'}
+                      </TableCell>
+
+                      <TableCell sx={cellSx} title={order.deliveryLocation}>{order.deliveryLocation}</TableCell>
+                      <TableCell sx={cellSx} title={order.createdBy}>{order.createdBy}</TableCell>
+
+                      {/* Actions */}
+                      <TableCell>
+                        <IconButton size="small" onClick={() => handleEdit(order)}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                      <TableCell>
+                        <IconButton size="small" color="error" onClick={() => handleDelete(order._id)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                      <TableCell>
+                        <IconButton size="small" color="primary" onClick={() => handleDownloadPDF(order)}>
+                          <PictureAsPdfIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          {/* ── Pagination ── */}
+          <Box sx={{
+            display:        'flex',
+            justifyContent: { xs: 'center', sm: 'flex-end' },
+            alignItems:     'center',
+            mb:             2,
+            gap:            1,
+            flexWrap:       'wrap',
+          }}>
+            <Button
+              disabled={page === 0}
+              onClick={() => setPage(page - 1)}
+              size={isSm ? 'small' : 'medium'}
+            >
+              Previous
+            </Button>
+            <Typography sx={{ mx: { xs: 1, sm: 2 }, fontSize: { xs: '0.875rem', sm: '1rem' } }}>
+              Page {page + 1} of {totalPages}
+            </Typography>
+            <Button
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage(page + 1)}
+              size={isSm ? 'small' : 'medium'}
+            >
+              Next
+            </Button>
+          </Box>
+
+          {/* Dialogs */}
+          {renderEditDialog()}
+
+          <AddProductDialog
+            open={addProductDialogOpen}
+            onClose={() => setAddProductDialogOpen(false)}
+            onProductAdded={handleProductAdded}
+            vendorName={editOrder?.vendorName}
+            darkMode={darkMode}
+          />
+
+        </Paper>
+      </Box>
+    </Fade>
   );
 };
 

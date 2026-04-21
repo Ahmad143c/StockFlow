@@ -31,7 +31,11 @@ const purchaseOrderSchema = new mongoose.Schema({
     unitPrice: Number,
     tax: Number,
     discount: Number,
-    totalLineAmount: Number
+    totalLineAmount: Number,
+    cartonQuantity: { type: Number, default: 0 },
+    piecesPerCarton: { type: Number, default: 0 },
+    losePieces: { type: Number, default: 0 },
+    itemSource: { type: String, default: 'AdminProductList' }
   }],
 
   subtotal: { type: Number, default: 0 },

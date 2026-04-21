@@ -188,6 +188,60 @@ exports.update = async (req, res) => {
       // Do not fail the PO update due to inventory sync; report but continue
     }
 
+    // If order is already Received and new items were added, restock only the new items
+    try {
+      const alreadyReceived = (updatedOrder.orderStatus || '').toLowerCase() === 'received';
+      const newItems = req.body.newItems;
+
+      if (alreadyReceived && Array.isArray(newItems) && newItems.length > 0) {
+        for (const item of newItems) {
+          if (!item || !item.itemCode) continue;
+          const product = await Product.findOne({ SKU: item.itemCode });
+          if (!product) continue;
+
+          const piecesPerCarton = Number(product.piecesPerCarton) || 0;
+          const rawQty = Number(item.quantityOrdered) || 0;
+          const uom = (item.uom || '').toString().toLowerCase();
+          const receivedPieces =
+            ['box', 'boxes', 'carton', 'cartons'].includes(uom) && piecesPerCarton > 0
+              ? rawQty * piecesPerCarton
+              : rawQty;
+
+          const currentTotalPieces = Number(product.totalPieces) || ((Number(product.cartonQuantity) || 0) * (Number(product.piecesPerCarton) || 0)) + (Number(product.losePieces) || 0);
+          const newTotalPieces = currentTotalPieces + receivedPieces;
+
+          let newCartons = Number(product.cartonQuantity) || 0;
+          let newLosePieces = Number(product.losePieces) || 0;
+
+          if (piecesPerCarton > 0) {
+            newCartons = Math.floor(newTotalPieces / piecesPerCarton);
+            newLosePieces = newTotalPieces % piecesPerCarton;
+          } else {
+            newCartons = Number(product.cartonQuantity) || 0;
+            newLosePieces = newTotalPieces;
+          }
+
+          const stockQuantity = newCartons + (newLosePieces > 0 ? 1 : 0);
+
+          product.totalPieces = newTotalPieces;
+          product.cartonQuantity = newCartons;
+          product.losePieces = newLosePieces;
+          product.stockQuantity = stockQuantity;
+
+          const costPerPiece = Number(product.costPerPiece) || 0;
+          const sellingPerPiece = Number(product.sellingPerPiece) || 0;
+          product.totalUnitCost = costPerPiece * newTotalPieces;
+          product.perPieceProfit = sellingPerPiece - costPerPiece;
+          product.totalUnitProfit = product.perPieceProfit * newTotalPieces;
+
+          await product.save();
+        }
+      }
+    } catch (newItemErr) {
+      console.error('Inventory sync for new items on Received PO failed:', newItemErr);
+      // Do not fail the PO update due to inventory sync
+    }
+
     // Note: cashPaymentDateTime is handled above pre-update; no-op here
 
     res.json(updatedOrder);

@@ -8,7 +8,8 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['admin', 'staff'], default: 'staff' },
   shopName: { type: String },
   sellingPoint: { type: String },
-  productCategory: { type: String }
+  productCategory: { type: String },
+  passwordVersion: { type: Number, default: 0 }
 });
 
 userSchema.pre('save', async function(next) {
