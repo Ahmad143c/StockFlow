@@ -9,18 +9,13 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// CORS configuration – allow all origins and handle preflight explicitly
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow all origins including GitHub Codespaces
-    if (!origin) return callback(null, true);
-    return callback(null, true);
-  },
+// CORS configuration – allow all origins
+app.use(cors({
+  origin: '*',
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
-  credentials: true,        // allow cookies/auth headers if needed
-};
-app.use(cors(corsOptions));
+  credentials: false,
+}));
 // express-cors middleware already handles preflight; explicit app.options('*')
 // registration triggers a path-to-regexp error with '*' so we omit it.
 
