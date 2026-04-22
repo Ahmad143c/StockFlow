@@ -34,8 +34,8 @@ const HomePage = () => {
             }}>
               <Box sx={{ mb: { xs: 2, sm: 3 } }}>
                 <Button onClick={() => navigate('/')} sx={{ p: 0, minWidth: 0 }}>
-                  <img 
-                    src={process.env.PUBLIC_URL + '/Inventory logo.png'} 
+                  <img
+                    src={process.env.PUBLIC_URL + '/Inventorylogo.png'}
                     alt="Inventory Logo" 
                     style={{ 
                       height: isMobile ? 50 : isTablet ? 65 : 80,
