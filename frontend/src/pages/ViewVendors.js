@@ -7,6 +7,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useDarkMode } from '../context/DarkModeContext';
+import API from '../api/api';
 
 const ViewVendors = () => {
   const [vendors, setVendors] = useState([]);
@@ -54,33 +55,21 @@ const ViewVendors = () => {
 
   React.useEffect(() => {
     // Fetch vendors from API
-    import('../api/api').then(({ default: API }) => {
-      API.get('/vendors', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-        .then(res => {
-          setVendors(res.data);
-          // Fetch PO counts for each vendor
-          fetchPOCounts(res.data);
-        }).catch(() => setVendors([]));
-    });
+    API.get('/vendors')
+      .then(res => {
+        setVendors(res.data);
+        // Fetch PO counts for each vendor
+        fetchPOCounts(res.data);
+      }).catch(() => setVendors([]));
   }, []);
 
   const fetchPOCounts = async (vendorsList) => {
-    const token = localStorage.getItem('token');
     const counts = {};
-    
     for (const vendor of vendorsList) {
       try {
-        const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/purchase-orders?vendorId=${vendor._id}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        if (response.ok) {
-          const pos = await response.json();
-          counts[vendor._id] = pos.length;
-        }
+        const res = await API.get(`/purchase-orders?vendorId=${vendor._id}`);
+        counts[vendor._id] = res.data.length;
       } catch (error) {
-        console.warn(`Could not fetch PO count for vendor ${vendor._id}:`, error);
         counts[vendor._id] = 0;
       }
     }
@@ -103,27 +92,12 @@ const ViewVendors = () => {
 
   const handleEditSave = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/vendors/${editVendor._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(editVendor)
-      });
-
-      if (response.ok) {
-        const updatedVendor = await response.json();
-        setVendors(vendors.map(v => v._id === updatedVendor._id ? updatedVendor : v));
-        setEditOpen(false);
-        alert('Vendor updated successfully!');
-      } else {
-        alert('Failed to update vendor. Please try again.');
-      }
+      const res = await API.put(`/vendors/${editVendor._id}`, editVendor);
+      setVendors(vendors.map(v => v._id === res.data._id ? res.data : v));
+      setEditOpen(false);
+      alert('Vendor updated successfully!');
     } catch (error) {
-      console.error('Error updating vendor:', error);
-      alert('Error updating vendor. Please try again.');
+      alert('Failed to update vendor. Please try again.');
     }
   };
 
@@ -140,25 +114,13 @@ const ViewVendors = () => {
   const handleDeleteConfirm = async () => {
     setDeleteLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/vendors/${deleteVendor._id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        setVendors(vendors.filter(v => v._id !== deleteVendor._id));
-        setDeleteOpen(false);
-        setDeleteVendor(null);
-        alert('Vendor deleted successfully!');
-      } else {
-        alert('Failed to delete vendor. Please try again.');
-      }
+      await API.delete(`/vendors/${deleteVendor._id}`);
+      setVendors(vendors.filter(v => v._id !== deleteVendor._id));
+      setDeleteOpen(false);
+      setDeleteVendor(null);
+      alert('Vendor deleted successfully!');
     } catch (error) {
-      console.error('Error deleting vendor:', error);
-      alert('Error deleting vendor. Please try again.');
+      alert('Failed to delete vendor. Please try again.');
     } finally {
       setDeleteLoading(false);
     }
@@ -175,43 +137,19 @@ const ViewVendors = () => {
     setPoDialogOpen(true);
 
     try {
-      const token = localStorage.getItem('token');
-      // Fetch detailed PO data like AdminPurchaseReport.js does
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/purchase-orders?vendorId=${vendor._id}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const pos = await response.json();
-        
-        // Fetch full details for each PO like AdminPurchaseReport.js
-        const detailedPOs = await Promise.all(
-          pos.map(async (po) => {
-            try {
-              const detailResponse = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/purchase-orders/${po._id}`, {
-                headers: {
-                  'Authorization': `Bearer ${token}`
-                }
-              });
-              if (detailResponse.ok) {
-                return await detailResponse.json();
-              }
-              return po;
-            } catch (error) {
-              console.warn(`Could not fetch details for PO ${po._id}:`, error);
-              return po;
-            }
-          })
-        );
-        
-        setVendorPOs(detailedPOs);
-      } else {
-        setVendorPOs([]);
-      }
+      const res = await API.get(`/purchase-orders?vendorId=${vendor._id}`);
+      const detailedPOs = await Promise.all(
+        res.data.map(async (po) => {
+          try {
+            const detail = await API.get(`/purchase-orders/${po._id}`);
+            return detail.data;
+          } catch {
+            return po;
+          }
+        })
+      );
+      setVendorPOs(detailedPOs);
     } catch (error) {
-      console.error('Error fetching vendor POs:', error);
       setVendorPOs([]);
     } finally {
       setLoadingPOs(false);
