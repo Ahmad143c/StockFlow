@@ -143,7 +143,7 @@ const uploadFile = async (file) => {
   const formData = new FormData();
   formData.append('image', file);
   try {
-    const response = await fetch('http://localhost:5000/api/upload', {
+    const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/upload`, {
       method: 'POST',
       body: formData,
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
