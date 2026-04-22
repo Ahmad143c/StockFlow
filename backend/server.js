@@ -9,9 +9,18 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// CORS configuration – allow all origins and handle preflight explicitly
+// CORS configuration – allow localhost and dynamic Codespace URLs
 const corsOptions = {
-  origin: true,             // reflect request origin
+  origin: function (origin, callback) {
+    const allowed = [
+      'http://localhost:3000',
+      /\.app\.github\.dev$/   // allows any Codespace URL
+    ];
+    const isAllowed = !origin || allowed.some(o => 
+      o instanceof RegExp ? o.test(origin) : o === origin
+    );
+    callback(null, isAllowed);
+  },
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true,        // allow cookies/auth headers if needed
