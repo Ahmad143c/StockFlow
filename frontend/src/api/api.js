@@ -13,6 +13,20 @@ const API = axios.create({
   baseURL,
 });
 
+// Add request interceptor to include Authorization header
+API.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 // Add response interceptor to handle 401 errors
 API.interceptors.response.use(
   (response) => response,
