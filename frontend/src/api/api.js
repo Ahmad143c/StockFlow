@@ -1,10 +1,16 @@
 import axios from 'axios';
 
+// Detect if running in GitHub Codespaces
+const isCodespaces = window.location.hostname.includes('.app.github.dev');
+
+// In Codespaces, use the Codespaces URL with port 5000 for backend
+// Otherwise, use proxy or explicit API URL
+const baseURL = isCodespaces
+  ? window.location.origin.replace('-3000', '-5000') + '/api'
+  : process.env.REACT_APP_API_URL || '/api';
+
 const API = axios.create({
-  // when running with CRA dev-server, '/api' will be proxied to the backend
-  // by adding "proxy": "http://localhost:5000" to package.json;
-  // otherwise an explicit REACT_APP_API_URL can still override it.
-  baseURL: process.env.REACT_APP_API_URL || '/api',
+  baseURL,
 });
 
 // Add response interceptor to handle 401 errors
