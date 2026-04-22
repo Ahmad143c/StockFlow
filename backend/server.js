@@ -19,7 +19,8 @@ app.use(cors({
 // express-cors middleware already handles preflight; explicit app.options('*')
 // registration triggers a path-to-regexp error with '*' so we omit it.
 
-app.use(helmet());
+// Temporarily disable helmet to check if it's blocking CORS
+// app.use(helmet());
 // Serve uploads folder for file viewing
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
