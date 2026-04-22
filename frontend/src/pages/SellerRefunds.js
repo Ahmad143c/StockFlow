@@ -298,10 +298,10 @@ const SellerRefunds = () => {
             </thead>
             <tbody>
               ${(sale.refunds || []).map((refund, refIdx) =>
-                refund.items.map((item, itemIdx) => {
-                  const itemPrice = Number(item.perPiecePrice || item.price || 0);
-                  const itemTotal = itemPrice * (Number(item.quantity || 0));
-                  return `
+			refund.items.map((item, itemIdx) => {
+				const itemPrice = Number(item.perPiecePrice || item.price || 0);
+				const itemTotal = itemPrice * (Number(item.quantity || 0));
+				return `
                     <tr>
                       <td>${refIdx * 10 + itemIdx + 1}</td>
                       <td>${item.productName || '-'}</td>
@@ -311,8 +311,8 @@ const SellerRefunds = () => {
                       <td class="text-right"style="font-size: 7px;">${refund.reason || '-'}</td>
                     </tr>
                   `;
-                }).join('')
-              ).join('')}
+			}).join('')
+		).join('')}
               
               <tr class="total-row">
                 <td colspan="5">Original Total</td>
@@ -519,8 +519,7 @@ const SellerRefunds = () => {
 						position: 'relative',
 						overflow: 'hidden'
 					}}>
-						<img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 50, maxWidth: '100%', objectFit: 'contain', marginRight: 12 }} />
-						<Typography
+						<img src="/Inventorylogo.png" alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />						<Typography
 							variant={isSm ? 'h6' : 'h4'}
 							color="primary"
 							sx={{

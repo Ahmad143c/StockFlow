@@ -838,7 +838,7 @@ const AdminSellerClients = () => {
             animation: 'pulse 4s ease-in-out infinite',
           }
         }}>
-          <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 50, maxWidth: '100%', objectFit: 'contain', marginRight: 12 }} />
+          <img src="/Inventorylogo.png" alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />          
           <Typography
             variant={isSm ? 'h6' : 'h4'}
             color="primary"

@@ -26,13 +26,11 @@ import {
   useTheme,
   useMediaQuery,
   InputAdornment,
-  Alert,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import PrintIcon from '@mui/icons-material/Print';
 import ReceiptIcon from '@mui/icons-material/Receipt';
-import EmailIcon from '@mui/icons-material/Email';
 import MoneyOffIcon from '@mui/icons-material/MoneyOff';
 import { generateInvoiceHTML } from '../utils/invoiceUtils';
 import { useDarkMode } from '../context/DarkModeContext';
@@ -44,39 +42,42 @@ const SellerSalesReport = () => {
   const [sales, setSales] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [highlightId, setHighlightId] = useState('');
+  const [highlightUntil, setHighlightUntil] = useState(0);
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundTarget, setRefundTarget] = useState(null);
   const [refundItems, setRefundItems] = useState([]);
   const [refundReason, setRefundReason] = useState('');
-  const [highlightId, setHighlightId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const [printPreviewHtml, setPrintPreviewHtml] = useState('');
-  // feedback messages for the user
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
-  const products = useSelector(state => (state?.products?.items) ?? []);
   const previewRef = useRef(null);
+  const products = useSelector(state => (state?.products?.items) ?? []);
 
-  // move fetchSales to component scope so other handlers can reuse it
   const fetchSales = useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
       const payload = JSON.parse(atob(token.split('.')[1]));
       const res = await API.get(`/sales?sellerId=${payload.id}`, { headers: { Authorization: `Bearer ${token}` } });
       setSales(res.data);
+      // Handle deep-link highlight
       const params = new URLSearchParams(window.location.search);
       const highlight = params.get('highlight');
+      const type = params.get('type');
       if (highlight) {
         const match = res.data.find(s => s._id === highlight || String(s.invoiceNumber) === highlight);
         if (match) {
           setHighlightId(match._id);
+          setHighlightUntil(Date.now() + 6000); // blink for 6s
           setTimeout(() => {
-            const el = document.getElementById(`seller-sale-${match._id}`);
-            if (el?.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const el = document.getElementById(`sale-${match._id}`);
+            if (el && typeof el.scrollIntoView === 'function') {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
           }, 100);
-          setTimeout(() => setHighlightId(''), 4000);
+          // Clear highlight after the blink period
+          setTimeout(() => setHighlightId(''), 6000);
         }
       }
     } catch {
@@ -84,21 +85,73 @@ const SellerSalesReport = () => {
     }
   }, []);
 
-  const onChanged = useCallback(() => fetchSales(), [fetchSales]);
-  const onStorage = useCallback((e) => { if (e.key === 'sales:changed') fetchSales(); }, [fetchSales]);
-  const onFocus = useCallback(() => fetchSales(), [fetchSales]);
+  const handleIncomingNotif = useCallback((n) => {
+    if (!n) return;
+    const id = n.id || n;
+    if (!id) return;
+    // Refresh data and highlight the incoming sale
+    fetchSales();
+    setHighlightId(id);
+    setHighlightUntil(Date.now() + 6000);
+    setTimeout(() => {
+      const el = document.getElementById(`sale-${id}`);
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 150);
+    // clear after blink
+    setTimeout(() => setHighlightId(''), 6000);
+  }, [fetchSales]);
+
+  const onCleared = useCallback(() => {
+    fetchSales();
+    setHighlightId('');
+  }, [fetchSales]);
+
+  const onChanged = useCallback((e) => {
+    // If the event carries an id, use it to highlight directly
+    try { if (e?.detail?.id) handleIncomingNotif(e.detail.id); } catch (err) { }
+    fetchSales();
+  }, [fetchSales, handleIncomingNotif]);
+
+  const onStorage = useCallback((e) => {
+    if (e.key === 'sales:changed') { fetchSales(); return; }
+    if (e.key === 'sales:latest') {
+      try { const raw = localStorage.getItem('sales:latest'); if (raw) handleIncomingNotif(JSON.parse(raw)); } catch (err) { }
+    }
+  }, [fetchSales, handleIncomingNotif]);
+
+  const onLatest = useCallback((e) => { try { if (e?.detail) handleIncomingNotif(e.detail); } catch (err) { } }, [handleIncomingNotif]);
 
   useEffect(() => {
     fetchSales();
+
+    // BroadcastChannel for fast cross-tab delivery
+    let ch = null;
+    try {
+      if (window.BroadcastChannel) {
+        ch = new BroadcastChannel('sales');
+        ch.onmessage = (ev) => { if (ev?.data?.notif) handleIncomingNotif(ev.data.notif); };
+      }
+    } catch (e) { }
+
     window.addEventListener('sales:changed', onChanged);
+    window.addEventListener('sales:latest', onLatest);
+    window.addEventListener('sales:cleared', onCleared);
     window.addEventListener('storage', onStorage);
-    window.addEventListener('focus', onFocus);
-    return () => { window.removeEventListener('sales:changed', onChanged); window.removeEventListener('storage', onStorage); window.removeEventListener('focus', onFocus); };
-  }, [fetchSales, onChanged, onStorage, onFocus]);
+    window.addEventListener('focus', fetchSales);
+    return () => {
+      window.removeEventListener('sales:changed', onChanged);
+      window.removeEventListener('sales:latest', onLatest);
+      window.removeEventListener('sales:cleared', onCleared);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', fetchSales);
+      try { if (ch) ch.close(); } catch (e) { }
+    };
+  }, [fetchSales, handleIncomingNotif, onCleared, onChanged, onStorage, onLatest]);
 
   const filteredSales = useMemo(() => {
     return sales.filter(sale => {
-      const hasActive = (Number(sale.totalQuantity) || Number(sale.netAmount) || 0) > 0;
       const q = (search || '').toString().trim().toLowerCase();
       const matchesSearch = !q || (
         (sale.items || []).some(i => i.productName?.toLowerCase().includes(q)) ||
@@ -111,18 +164,10 @@ const SellerSalesReport = () => {
       const created = new Date(sale.createdAt);
       const matchesStart = !startDate || created >= new Date(startDate + 'T00:00:00');
       const matchesEnd = !endDate || created <= new Date(endDate + 'T23:59:59');
+      const hasActive = (Number(sale.totalQuantity) || Number(sale.netAmount) || 0) > 0;
       return hasActive && matchesSearch && matchesStatus && matchesStart && matchesEnd;
     });
   }, [sales, search, status, startDate, endDate]);
-
-  // KPI (Summary) - memoized
-  const { totalRevenue, totalSales, totalQty } = useMemo(() => {
-    return {
-      totalRevenue: filteredSales.reduce((sum, s) => sum + Number(s.netAmount), 0),
-      totalSales: filteredSales.length,
-      totalQty: filteredSales.reduce((sum, s) => sum + Number(s.totalQuantity), 0)
-    };
-  }, [filteredSales]);
 
   // Helper: calculate refunded quantity for an item
   const calculateRefundedQty = useCallback((sale, productId) => {
@@ -153,7 +198,7 @@ const SellerSalesReport = () => {
 
     const rowsHtml = rows.map((r, idx) => {
       const invoice = r.invoiceNumber || (r._id ? r._id.substr(-6) : '');
-      const items = r.items.map(i => i.productName).join(', ');
+      const items = Array.isArray(r.items) ? r.items.map(i => i.productName).join(', ') : '';
       const qty = r.items.reduce((sum, item) => {
         const refundedQty = calculateRefundedQty(r, item.productId);
         return sum + Math.max(0, Number(item.quantity || 0) - refundedQty);
@@ -305,10 +350,7 @@ const SellerSalesReport = () => {
       </body></html>
     `;
     const w = window.open('', '_blank');
-    if (!w || !w.document) {
-      alert('Popup blocked. Allow popups to print.');
-      return;
-    }
+    if (!w || !w.document) { alert('Popup blocked. Allow popups to print.'); return; }
     w.document.write(html);
     w.document.close();
     setTimeout(() => w.print(), 250);
@@ -320,22 +362,10 @@ const SellerSalesReport = () => {
     setPrintPreviewOpen(true);
   }, [products]);
 
-  const handleResendEmail = useCallback(async (saleId) => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await API.post(`/sales/${saleId}/resend-email`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.data && res.data.success) {
-        setSuccess('Invoice email resent successfully');
-        await fetchSales();
-      } else {
-        setError(res.data?.message || 'Failed to resend email');
-      }
-    } catch (e) {
-      setError(e.response?.data?.message || e.message || 'Failed to resend email');
-    }
-  }, [fetchSales]);
+  const handleRefundClick = useCallback((sale) => {
+    setRefundTarget(sale);
+    setRefundModalOpen(true);
+  }, []);
 
   const cellSx = useMemo(() => ({
     maxWidth: { xs: 80, sm: 120, md: 160, lg: 240 },
@@ -424,7 +454,7 @@ const SellerSalesReport = () => {
             position: 'relative',
             overflow: 'hidden'
           }}>
-            <img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: isSm ? 50 : 60, maxWidth: '100%', objectFit: 'contain', marginRight: 12 }} />
+            <img src="/Inventorylogo.png" alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />
             <Typography
               variant={isSm ? 'h6' : 'h4'}
               color="primary"
@@ -433,25 +463,9 @@ const SellerSalesReport = () => {
                 fontSize: { xs: '1.1rem', sm: '1.5rem', md: '2rem' }
               }}
             >
-              Sales Report (My Sales)
+              Sales Report
             </Typography>
           </Box>
-
-          {/* Summary Stats */}
-          <Grid container spacing={1} mb={2}>
-            <Grid item xs={12} sm={6} md={1}>
-              <Typography variant={isSm ? 'body2' : 'body1'}>Total Sales: {totalSales}</Typography>
-            </Grid>
-            <Grid item xs={12} sm={6} md={1}>
-              <Typography variant={isSm ? 'body2' : 'body1'}>Total Qty: {totalQty}</Typography>
-            </Grid>
-            <Grid item xs={12} sm={12} md={3}>
-              <Typography variant={isSm ? 'body2' : 'body1'}>Total Revenue: Rs. {totalRevenue}</Typography>
-            </Grid>
-          </Grid>
-
-          {success && <Alert severity="success" onClose={() => setSuccess('')} sx={{ mb:2 }}>{success}</Alert>}
-          {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb:2 }}>{error}</Alert>}
 
           {/* Search Field */}
           <TextField
@@ -474,7 +488,7 @@ const SellerSalesReport = () => {
             gridTemplateColumns: {
               xs: '1fr',
               sm: 'repeat(2, 1fr)',
-              md: 'repeat(4, auto)'
+              md: 'repeat(5, auto)'
             },
             gap: { xs: 1.5, sm: 2 },
             mb: 2,
@@ -596,209 +610,222 @@ const SellerSalesReport = () => {
               <TableHead>
                 <TableRow>
                   <TableCell sx={{
-                    ...headerCellSx,
+                    fontWeight: 'bold',
+                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                    padding: { xs: '8px 6px', sm: '12px 16px' },
                     position: 'sticky',
                     left: 0,
+                    backgroundColor: darkMode ? '#2a2a2a' : '#fff',
                     zIndex: 3,
                     boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
                     minWidth: { xs: 10, sm: 100 }
                   }}>S/N</TableCell>
                   <TableCell sx={{
-                    ...headerCellSx,
+                    fontWeight: 'bold',
+                    fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                    padding: { xs: '8px 6px', sm: '12px 16px' },
                     position: 'sticky',
                     left: { xs: 36, sm: 100 },
+                    backgroundColor: darkMode ? '#2a2a2a' : '#fff',
                     zIndex: 3,
                     boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
                     minWidth: { xs: 50, sm: 120 }
                   }}>Invoice</TableCell>
                   <TableCell sx={headerCellSx}>Date</TableCell>
-                  <TableCell sx={headerCellSx}>Customer</TableCell>
                   <TableCell sx={headerCellSx}>Cashier</TableCell>
                   <TableCell sx={headerCellSx}>Items</TableCell>
                   <TableCell sx={headerCellSx}>Item Price</TableCell>
+                  <TableCell sx={headerCellSx}>Customer</TableCell>
+                  <TableCell sx={headerCellSx}>Customer No</TableCell>
                   <TableCell sx={headerCellSx} align="right">Qty</TableCell>
                   <TableCell sx={headerCellSx} align="right">Total (Rs)</TableCell>
                   <TableCell sx={headerCellSx} align="right">Discount (Rs)</TableCell>
                   <TableCell sx={headerCellSx}>Status</TableCell>
                   <TableCell sx={headerCellSx} align="center">Warranty</TableCell>
-                  <TableCell sx={headerCellSx}>Email</TableCell>
                   <TableCell sx={headerCellSx} align="center">Invoice</TableCell>
                   <TableCell sx={headerCellSx}>Actions</TableCell>
                 </TableRow>
               </TableHead>
-            <TableBody>
-              {filteredSales.map((sale, idx) => {
-                const created = new Date(sale.createdAt);
-                const warrantyUntil = new Date(created);
-                warrantyUntil.setFullYear(warrantyUntil.getFullYear() + 1);
-                const underWarranty = new Date() <= warrantyUntil;
-
-                const perItem = new Map();
-                let totalClaimedQty = 0;
-                (sale.warrantyClaims || []).forEach(wc => {
-                  (wc.items || []).forEach(ci => {
-                    const key = String(ci.productName || ci.SKU || ci.productId || '');
-                    if (!key) return;
-                    const prev = perItem.get(key) || { claimed: 0, firstClaim: null };
-                    const q = Number(ci.quantity) || 0;
-                    prev.claimed += q;
-                    totalClaimedQty += q;
-                    const claimDate = wc.createdAt ? new Date(wc.createdAt) : null;
-                    if (claimDate && (!prev.firstClaim || claimDate < prev.firstClaim)) {
-                      prev.firstClaim = claimDate;
+              <TableBody>
+                {filteredSales.map((sale, idx) => {
+                  const isBlink = highlightId && sale._id === highlightId && Date.now() < highlightUntil;
+                  const rowSx = isBlink ? {
+                    animation: 'blinkBg 1s linear infinite',
+                    '@keyframes blinkBg': {
+                      '0%': { backgroundColor: '#fffde7' },
+                      '50%': { backgroundColor: '#fff59d' },
+                      '100%': { backgroundColor: '#fffde7' }
                     }
-                    perItem.set(key, prev);
+                  } : { backgroundColor: 'inherit', transition: 'background-color 0.3s' };
+
+                  const created = new Date(sale.createdAt);
+                  const warrantyUntil = new Date(created);
+                  warrantyUntil.setFullYear(warrantyUntil.getFullYear() + 1);
+                  const underWarranty = new Date() <= warrantyUntil;
+
+                  const perItem = new Map();
+                  let totalClaimedQty = 0;
+                  (sale.warrantyClaims || []).forEach(wc => {
+                    (wc.items || []).forEach(ci => {
+                      const key = String(ci.productName || ci.SKU || ci.productId || '');
+                      if (!key) return;
+                      const prev = perItem.get(key) || { claimed: 0, firstClaim: null };
+                      const q = Number(ci.quantity) || 0;
+                      prev.claimed += q;
+                      totalClaimedQty += q;
+                      const claimDate = wc.createdAt ? new Date(wc.createdAt) : null;
+                      if (claimDate && (!prev.firstClaim || claimDate < prev.firstClaim)) {
+                        prev.firstClaim = claimDate;
+                      }
+                      perItem.set(key, prev);
+                    });
                   });
-                });
 
-                const warrantyTooltip = (
-                  <Box sx={{ p: 0.5 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      Warranty details for this invoice
-                    </Typography>
-                    {perItem.size === 0 ? (
-                      <Typography variant="caption" display="block">
-                        No warranty claims on this invoice.
+                  const warrantyTooltip = (
+                    <Box sx={{ p: 0.5 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        Warranty details for this invoice
                       </Typography>
-                    ) : (
-                      Array.from(perItem.entries()).map(([name, info]) => (
-                        <Typography key={name} variant="caption" display="block">
-                          {name}: warranty claimed {info.claimed} pcs
-                          {info.firstClaim
-                            ? ` (first claim: ${info.firstClaim.toLocaleString()})`
-                            : ''}
+                      {perItem.size === 0 ? (
+                        <Typography variant="caption" display="block">
+                          No warranty claims on this invoice.
                         </Typography>
-                      ))
-                    )}
-                  </Box>
-                );
-
-                return (
-                  <TableRow
-                    key={sale._id}
-                    id={`seller-sale-${sale._id}`}
-                    sx={{ backgroundColor: sale._id === highlightId ? 'rgba(255, 235, 59, 0.35)' : 'inherit' }}
-                  >
-                    <TableCell sx={{
-                      ...cellSx,
-                      position: 'sticky',
-                      left: 0,
-                      backgroundColor: darkMode ? '#2a2a2a' : '#fff',
-                      zIndex: 1,
-                      boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
-                      minWidth: { xs: 10, sm: 100 }
-                    }}>{idx + 1}</TableCell>
-                    <TableCell sx={{
-                      ...cellSx,
-                      position: 'sticky',
-                      left: { xs: 36, sm: 100 },
-                      backgroundColor: darkMode ? '#2a2a2a' : '#fff',
-                      zIndex: 1,
-                      boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
-                      minWidth: { xs: 50, sm: 120 }
-                    }}>{sale.invoiceNumber || (sale._id ? sale._id.substr(-6) : '')}</TableCell>
-                    <TableCell sx={cellSx}>{new Date(sale.createdAt).toLocaleString()}</TableCell>
-                    <TableCell sx={cellSx}>{sale.customerName || '-'}</TableCell>
-                    <TableCell sx={cellSx}>{sale.cashierName || '-'}</TableCell>
-                    <TableCell sx={cellSx}>
-                      <Tooltip
-                        title={
-                          <Box sx={{ p: 0.5 }}>
-                            {sale.items.map(i => {
-                              const origQty = Number(i.quantity) || 0;
-                              const refunded = calculateRefundedQty(sale, i.productId);
-                              const remaining = origQty - refunded;
-                              return (
-                                <Typography key={i.productId} variant="caption" display="block">
-                                  {i.productName || '-'} x{remaining}{refunded ? ` (-${refunded} ref)` : ''}
-                                </Typography>
-                              );
-                            })}
-                          </Box>
-                        }
-                        arrow
-                      >
-                        <Chip
-                          label={`${sale.items.length} Products`}
-                          size="small"
-                          sx={{ cursor: 'pointer', height: 24 }}
-                        />
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell sx={cellSx}>
-                      <Tooltip
-                        title={
-                          <Box sx={{ p: 0.5 }}>
-                            {sale.items.map(i => (
-                              <Typography key={i.productId} variant="caption" display="block">
-                                {i.productName || '-'}: Rs. {Number(i.perPiecePrice || 0).toLocaleString()}
-                              </Typography>
-                            ))}
-                          </Box>
-                        }
-                        arrow
-                      >
-                        <Chip
-                          label={sale.items.slice(0, 2).map(i => `Rs. ${Number(i.perPiecePrice || 0).toLocaleString()}`).join(', ') + (sale.items.length > 2 ? '...' : '')}
-                          size="small"
-                          sx={{ cursor: 'pointer', height: 24 }}
-                        />
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell sx={cellSx} align="right">
-                      {sale.items.reduce((sum, item) => {
-                        const refundedQty = calculateRefundedQty(sale, item.productId);
-                        const remaining = Number(item.quantity || 0) - refundedQty;
-                        return sum + Math.max(0, remaining);
-                      }, 0)}
-                    </TableCell>
-                    <TableCell sx={cellSx} align="right">{sale.netAmount}</TableCell>
-                    <TableCell sx={cellSx} align="right">
-                      <Typography sx={{ color: 'warning.main', fontWeight: 500 }}>
-                        Rs. {(Number(sale.discountAmount) || 0).toLocaleString()}
-                      </Typography>
-                    </TableCell>
-                    <TableCell sx={cellSx}>{sale.paymentStatus}</TableCell>
-                    <TableCell sx={cellSx}>
-                      {underWarranty ? (
-                        <Tooltip title={warrantyTooltip} arrow>
-                          <Box sx={{ position: 'relative', display: 'inline-block' }}>
-                            <Chip
-                              label={`${warrantyUntil.toLocaleDateString()}`}
-                              size="small"
-                              color="success"
-                              sx={{
-                                height: 35,
-                                fontSize: '0.7rem',
-                                '& .MuiChip-label': { whiteSpace: 'pre-line' },
-                              }}
-                            />
-                            {totalClaimedQty > 0 && (
-                              <Box
-                                sx={{
-                                  position: 'absolute',
-                                  top: -12,
-                                  right: -8,
-                                  backgroundColor: '#f44336',
-                                  color: 'white',
-                                  borderRadius: '50%',
-                                  width: 25,
-                                  height: 25,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '0.70rem',
-                                  fontWeight: 'bold',
-                                  border: '2px solid white',
-                                }}
-                              >
-                                {totalClaimedQty}
-                              </Box>
-                            )}
-                          </Box>
-                        </Tooltip>
                       ) : (
-                        <Tooltip title="Warranty expired" arrow>
+                        Array.from(perItem.entries()).map(([name, info]) => (
+                          <Typography key={name} variant="caption" display="block">
+                            {name}: warranty claimed {info.claimed} pcs
+                            {info.firstClaim
+                              ? ` (first claim: ${info.firstClaim.toLocaleString()})`
+                              : ''}
+                          </Typography>
+                        ))
+                      )}
+                    </Box>
+                  );
+
+                  return (
+                    <TableRow key={sale._id} id={`sale-${sale._id}`} sx={rowSx}>
+                      <TableCell sx={{
+                        ...cellSx,
+                        position: 'sticky',
+                        left: 0,
+                        backgroundColor: darkMode ? '#2a2a2a' : '#fff',
+                        zIndex: 1,
+                        boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                        minWidth: { xs: 10, sm: 100 }
+                      }}>{idx + 1}</TableCell>
+
+                      <TableCell sx={{
+                        ...cellSx,
+                        position: 'sticky',
+                        left: { xs: 36, sm: 100 },
+                        backgroundColor: darkMode ? '#2a2a2a' : '#fff',
+                        zIndex: 1,
+                        boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
+                        minWidth: { xs: 50, sm: 120 }
+                      }}>{sale.invoiceNumber || (sale._id ? sale._id.substr(-6) : '')}</TableCell>
+                      <TableCell sx={cellSx}>{new Date(sale.createdAt).toLocaleString()}</TableCell>
+                      <TableCell sx={cellSx}>{sale.cashierName || '-'}</TableCell>
+                      <TableCell sx={cellSx}>
+                        <Tooltip
+                          title={
+                            <Box sx={{ p: 0.5 }}>
+                              {sale.items.map(i => {
+                                const origQty = Number(i.quantity) || 0;
+                                const refunded = calculateRefundedQty(sale, i.productId);
+                                const remaining = origQty - refunded;
+                                return (
+                                  <Typography key={i.productId} variant="caption" display="block">
+                                    {i.productName || '-'} x{remaining}{refunded ? ` (-${refunded} ref)` : ''}
+                                  </Typography>
+                                );
+                              })}
+                            </Box>
+                          }
+                          arrow
+                        >
+                          <Chip
+                            label={`${sale.items.length} Products`}
+                            size="small"
+                            sx={{ cursor: 'pointer', height: 24 }}
+                          />
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={cellSx}>
+                        <Tooltip
+                          title={
+                            <Box sx={{ p: 0.5 }}>
+                              {sale.items.map(i => (
+                                <Typography key={i.productId} variant="caption" display="block">
+                                  {i.productName || '-'}: Rs. {Number(i.perPiecePrice || 0).toLocaleString()}
+                                </Typography>
+                              ))}
+                            </Box>
+                          }
+                          arrow
+                        >
+                          <Chip
+                            label={sale.items.slice(0, 2).map(i => `Rs. ${Number(i.perPiecePrice || 0).toLocaleString()}`).join(', ') + (sale.items.length > 2 ? '...' : '')}
+                            size="small"
+                            sx={{ cursor: 'pointer', height: 24 }}
+                          />
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={cellSx}>{sale.customerName || '-'}</TableCell>
+                      <TableCell sx={cellSx}>{sale.customerContact || '-'}</TableCell>
+                      <TableCell sx={cellSx} align="right">
+                        {sale.items.reduce((sum, item) => {
+                          const refundedQty = calculateRefundedQty(sale, item.productId);
+                          const remaining = Number(item.quantity || 0) - refundedQty;
+                          return sum + Math.max(0, remaining);
+                        }, 0)}
+                      </TableCell>
+                      <TableCell sx={cellSx} align="right">{sale.netAmount}</TableCell>
+                      <TableCell sx={cellSx} align="right">
+                        <Typography sx={{ color: 'warning.main', fontWeight: 500 }}>
+                          Rs. {(Number(sale.discountAmount) || 0).toLocaleString()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={cellSx}>{sale.paymentStatus}</TableCell>
+                      <TableCell sx={cellSx}>
+                        {underWarranty ? (
+                          <Tooltip title={warrantyTooltip} arrow>
+                            <Box sx={{ position: 'relative', display: 'inline-block' }}>
+                              <Chip
+                                label={`${warrantyUntil.toLocaleDateString()}`}
+                                size="small"
+                                color="success"
+                                sx={{
+                                  height: 35,
+                                  fontSize: '0.7rem',
+                                  '& .MuiChip-label': { whiteSpace: 'pre-line' },
+                                }}
+                              />
+                              {totalClaimedQty > 0 && (
+                                <Box
+                                  sx={{
+                                    position: 'absolute',
+                                    top: -12,
+                                    right: -8,
+                                    backgroundColor: '#f44336',
+                                    color: 'white',
+                                    borderRadius: '50%',
+                                    width: 25,
+                                    height: 25,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '0.70rem',
+                                    fontWeight: 'bold',
+                                    border: '2px solid white',
+                                  }}
+                                >
+                                  {totalClaimedQty}
+                                </Box>
+                              )}
+                            </Box>
+                          </Tooltip>
+                        ) : (
                           <Chip
                             label="No Warranty"
                             size="small"
@@ -809,176 +836,114 @@ const SellerSalesReport = () => {
                               '& .MuiChip-label': { whiteSpace: 'pre-line' },
                             }}
                           />
+                        )}
+                      </TableCell>
+                      <TableCell sx={cellSx}>
+                        <Tooltip title="View Invoice">
+                          <IconButton
+                            onClick={() => handleViewInvoice(sale)}
+                            size="small"
+                            sx={{ color: darkMode ? '#90caf9' : '#1976d2' }}
+                          >
+                            <ReceiptIcon />
+                          </IconButton>
                         </Tooltip>
-                      )}
-                    </TableCell>
-                    <TableCell sx={cellSx}>
-                      {sale.emailStatus === 'sent' && <Box sx={{ color: '#4caf50', fontWeight: 600 }}>✉ Sent</Box>}
-                      {sale.emailStatus === 'failed' && (
-                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                          <Box sx={{ color: '#f44336', fontWeight: 600 }}>✉ Failed</Box>
-                          <Button size="small" onClick={() => handleResendEmail(sale._id)} variant="outlined">
-                            Resend
-                          </Button>
-                        </Box>
-                      )}
-                      {sale.emailStatus === 'pending' && (
-                        <Box sx={{ color: '#9e9e9e', fontWeight: 600 }}>⧐ Pending</Box>
-                      )}
-                    </TableCell>
-                    <TableCell sx={cellSx}>
-                      <Tooltip title="View Invoice">
+                      </TableCell>
+                      <TableCell sx={cellSx}>
                         <IconButton
-                          onClick={() => handleViewInvoice(sale)}
                           size="small"
-                          sx={{ color: darkMode ? '#90caf9' : '#1976d2' }}
+                          color="primary"
+                          onClick={() => {
+                            window.location.href = `/seller/sale-entry?edit=${encodeURIComponent(sale._id)}`;
+                          }}
                         >
-                          <ReceiptIcon />
+                          <EditIcon fontSize="small" />
                         </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell sx={cellSx}>
-                      <IconButton
-                        size="small"
-                        color="primary"
-                        onClick={() => {
-                          window.location.href = `/seller/sale-entry?edit=${encodeURIComponent(sale._id)}`;
-                        }}
-                      >
-                        <EditIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        color="error"
-                        onClick={async () => {
-                          if (!window.confirm('Refund all refundable items for this invoice and restock the products?')) return;
-                          try {
-                            const token = localStorage.getItem('token');
-                            const latest = await API.get(`/sales/${sale._id}`, {
-                              headers: { Authorization: `Bearer ${token}` },
-                            });
-                            const dbSale = latest.data;
-                            const origMap = new Map();
-                            (dbSale.items || []).forEach(it => {
-                              origMap.set(String(it.productId || it._id || ''), Number(it.quantity) || 0);
-                            });
-                            const refundedSoFar = new Map();
-                            (dbSale.refunds || []).forEach(r => {
-                              (r.items || []).forEach(it => {
-                                const k = String(it.productId);
-                                refundedSoFar.set(
-                                  k,
-                                  (refundedSoFar.get(k) || 0) + (Number(it.quantity) || 0)
-                                );
-                              });
-                            });
-                            const itemsPayload = [];
-                            for (const [pid, origQty] of origMap.entries()) {
-                              const already = Number(refundedSoFar.get(pid) || 0);
-                              const remaining = Math.max(0, Number(origQty) - already);
-                              if (remaining > 0) itemsPayload.push({ productId: pid, quantity: remaining });
-                            }
-                            if (itemsPayload.length === 0) {
-                              alert('No refundable quantity remaining for this invoice');
-                              return;
-                            }
-                            const res = await API.post(
-                              `/sales/${sale._id}/refund`,
-                              { items: itemsPayload, reason: 'Full refund by seller' },
-                              { headers: { Authorization: `Bearer ${token}` } }
-                            );
-                            if (res.data && res.data.success) {
-                              try {
-                                window.dispatchEvent(new CustomEvent('products:changed'));
-                              } catch (e) {}
-                              try {
-                                window.dispatchEvent(
-                                  new CustomEvent('sales:changed', { detail: { id: sale._id } })
-                                );
-                              } catch (e) {}
-                              await fetchSales();
-                              setSuccess('Invoice refunded and products restocked');
-                            } else {
-                              alert(res.data?.message || 'Refund failed');
-                            }
-                          } catch (e) {
-                            alert(e.response?.data?.message || e.message || 'Refund failed');
-                          }
-                        }}
-                      >
-                        <MoneyOffIcon fontSize="small" />
-                      </IconButton>
-                    </TableCell>
+                        <IconButton
+                          onClick={() => handleRefundClick(sale)}
+                          sx={{
+                            color: darkMode ? '#ef5350' : '#f44336',
+                            '&:hover': {
+                              backgroundColor: darkMode ? 'rgba(239, 83, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
+                              transform: 'scale(1.1)'
+                            },
+                            transition: 'all 0.3s ease'
+                          }}
+                        >
+                          <MoneyOffIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {filteredSales.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={14}>No sales found.</TableCell>
                   </TableRow>
-                );
-              })}
-              {filteredSales.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={14}>No sales found.</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
-        {/* invoice preview dialog */}
-        <Dialog open={printPreviewOpen} onClose={() => setPrintPreviewOpen(false)} maxWidth='xs' fullWidth>
-          <DialogTitle>Print Preview</DialogTitle>
-          <DialogContent dividers sx={{ display: 'flex', justifyContent: 'center' }}>
-            <iframe
-              title="invoice-preview"
-              srcDoc={printPreviewHtml}
-              style={{ width: '100%', maxWidth: '500px', height: '50vh', border: 'none' }}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button variant="contained" color="primary" startIcon={<PrintIcon />} onClick={() => {
-              const w = window.open('', '_blank');
-              if (!w || !w.document) { alert('Popup blocked. Please allow popups to print.'); return; }
-              w.document.write(printPreviewHtml);
-              w.document.close();
-              setTimeout(() => w.print(), 250);
-            }}>Print</Button>
-            <Button onClick={() => setPrintPreviewOpen(false)}>Close</Button>
-          </DialogActions>
-        </Dialog>
+          {/* invoice preview dialog */}
+          <Dialog open={printPreviewOpen} onClose={() => setPrintPreviewOpen(false)} maxWidth="xs" fullWidth>
+            <DialogTitle>Print Preview</DialogTitle>
+            <DialogContent dividers sx={{ display: 'flex', justifyContent: 'center' }}>
+              <iframe
+                title="invoice-preview"
+                srcDoc={printPreviewHtml}
+                style={{ width: '100%', maxWidth: '500px', height: '50vh', border: 'none' }}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button variant="contained" color="primary" startIcon={<PrintIcon />} onClick={() => {
+                const w = window.open('', '_blank');
+                if (!w || !w.document) { alert('Popup blocked. Please allow popups to print.'); return; }
+                w.document.write(printPreviewHtml);
+                w.document.close();
+                setTimeout(() => w.print(), 250);
+              }}>Print</Button>
+              <Button onClick={() => setPrintPreviewOpen(false)}>Close</Button>
+            </DialogActions>
+          </Dialog>
 
-        <Dialog open={refundModalOpen} onClose={() => setRefundModalOpen(false)} maxWidth="sm" fullWidth>
-          <DialogTitle>Refund Items</DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" sx={{ mb: 1 }}>Select quantities to refund for invoice.</Typography>
-            {refundItems.map((ri, idx) => (
-              <Box key={idx} sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 1, flexDirection: { xs: 'column', sm: 'row' } }}>
-                <Typography sx={{ width: { xs: '100%', sm: '50%' } }}>{ri.productName}</Typography>
-                <TextField type="number" label={`Qty (max ${ri.maxQty})`} value={ri.qty || ''} onChange={e => {
-                  const v = Math.max(0, Math.min(Number(e.target.value) || 0, ri.maxQty));
-                  const copy = [...refundItems]; copy[idx] = { ...ri, qty: v }; setRefundItems(copy);
-                }} sx={{ width: { xs: '100%', sm: 120 } }} />
-              </Box>
-            ))}
-            <TextField fullWidth label="Reason (optional)" value={refundReason} onChange={e => setRefundReason(e.target.value)} multiline rows={2} sx={{ mt: 2 }} />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setRefundModalOpen(false)}>Cancel</Button>
-            <Button variant="contained" color="error" onClick={async () => {
-              try {
-                const payloadItems = (refundItems || []).filter(i => (Number(i.qty) || 0) > 0).map(i => ({ productId: i.productId, SKU: i.SKU, productName: i.productName, quantity: Number(i.qty) }));
-                if (payloadItems.length === 0) { alert('Select at least one item to refund'); return; }
-                const token = localStorage.getItem('token');
-                const res = await API.post(`/sales/${refundTarget._id}/refund`, { items: payloadItems, reason: refundReason }, { headers: { Authorization: `Bearer ${token}` } });
-                if (res.data && res.data.success) {
-                  try { window.dispatchEvent(new CustomEvent('products:changed')); } catch (e) { }
-                  try { window.dispatchEvent(new CustomEvent('sales:changed', { detail: { id: refundTarget._id } })); } catch (e) { }
-                  setRefundModalOpen(false);
-                } else {
-                  alert(res.data?.message || 'Refund failed');
+          <Dialog open={refundModalOpen} onClose={() => setRefundModalOpen(false)} maxWidth="sm" fullWidth>
+            <DialogTitle>Refund Items</DialogTitle>
+            <DialogContent>
+              <Typography variant="body2" sx={{ mb: 1 }}>Select quantities to refund for invoice.</Typography>
+              {refundItems.map((ri, idx) => (
+                <Box key={idx} sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 1, flexDirection: { xs: 'column', sm: 'row' } }}>
+                  <Typography sx={{ width: { xs: '100%', sm: '50%' } }}>{ri.productName}</Typography>
+                  <TextField type="number" label={`Qty (max ${ri.maxQty})`} value={ri.qty || ''} onChange={e => {
+                    const v = Math.max(0, Math.min(Number(e.target.value) || 0, ri.maxQty));
+                    const copy = [...refundItems]; copy[idx] = { ...ri, qty: v }; setRefundItems(copy);
+                  }} sx={{ width: { xs: '100%', sm: 120 } }} />
+                </Box>
+              ))}
+              <TextField fullWidth label="Reason (optional)" value={refundReason} onChange={e => setRefundReason(e.target.value)} multiline rows={2} sx={{ mt: 2 }} />
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setRefundModalOpen(false)}>Cancel</Button>
+              <Button variant="contained" color="error" onClick={async () => {
+                try {
+                  const payloadItems = (refundItems || []).filter(i => (Number(i.qty) || 0) > 0).map(i => ({ productId: i.productId, SKU: i.SKU, productName: i.productName, quantity: Number(i.qty) }));
+                  if (payloadItems.length === 0) { alert('Select at least one item to refund'); return; }
+                  const token = localStorage.getItem('token');
+                  const res = await API.post(`/sales/${refundTarget._id}/refund`, { items: payloadItems, reason: refundReason }, { headers: { Authorization: `Bearer ${token}` } });
+                  if (res.data && res.data.success) {
+                    try { window.dispatchEvent(new CustomEvent('products:changed')); } catch (e) { }
+                    try { window.dispatchEvent(new CustomEvent('sales:changed', { detail: { id: refundTarget._id } })); } catch (e) { }
+                    setRefundModalOpen(false);
+                    await fetchSales();
+                  } else {
+                    alert(res.data?.message || 'Refund failed');
+                  }
+                } catch (e) {
+                  alert(e.response?.data?.message || e.message || 'Refund failed');
                 }
-              } catch (e) {
-                alert(e.response?.data?.message || e.message || 'Refund failed');
-              }
-            }}>Process Refund</Button>
-          </DialogActions>
-        </Dialog>
+              }}>Process Refund</Button>
+            </DialogActions>
+          </Dialog>
         </Paper>
       </Box>
     </Fade>

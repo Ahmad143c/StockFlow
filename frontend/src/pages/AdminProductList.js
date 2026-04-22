@@ -225,21 +225,21 @@ const AdminProductList = () => {
       <Box sx={{ mt: 2, width: '100%' }}>
         <Typography variant="h4" gutterBottom fontWeight={700}>Product List</Typography>
         {/* Analytics */}
-        <Grid container spacing={2} sx={{ mb: 3, px: { xs: 1, sm: 1 }, mt: '2px' }}>
+        <Grid container spacing={2} sx={{ mb: 3, px: { xs: 1, sm: 1 }, mt: '2px', }}>
           <Grid columns={12}>
-            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px' }}>
+            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px',}}>
               <Typography variant="subtitle2" color="text.secondary">Total Products</Typography>
               <Typography variant="h5" color="primary" fontWeight={700}>{formatNum(totalProducts)}</Typography>
             </Paper>
           </Grid>
           <Grid columns={12}>
-            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px' }}>
+            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px', }}>
               <Typography variant="subtitle2" color="text.secondary">Total Inventory Value</Typography>
               <Typography variant="h5" color="success.main" fontWeight={700}>Rs. {formatNum(Number(totalInventoryValue.toFixed(2)))}</Typography>
             </Paper>
           </Grid>
           <Grid columns={12}>
-            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px' }}>
+            <Paper elevation={3} sx={{ p: 2, textAlign: 'center', mb: 2, mx: '12px',}}>
               <Typography variant="subtitle2" color="text.secondary">Total Profit</Typography>
               <Typography variant="h5" color="info.main" fontWeight={700}>Rs. {formatNum(Number(totalProfit.toFixed(2)))}</Typography>
             </Paper>

@@ -336,10 +336,10 @@ const AdminRefunds = () => {
             </thead>
             <tbody>
               ${(sale.refunds || []).map((refund, refIdx) =>
-                refund.items.map((item, itemIdx) => {
-                  const itemPrice = Number(item.perPiecePrice || item.price || 0);
-                  const itemTotal = itemPrice * (Number(item.quantity || 0));
-                  return `
+			refund.items.map((item, itemIdx) => {
+				const itemPrice = Number(item.perPiecePrice || item.price || 0);
+				const itemTotal = itemPrice * (Number(item.quantity || 0));
+				return `
                     <tr>
                       <td>${refIdx * 10 + itemIdx + 1}</td>
                       <td>${item.productName || '-'}</td>
@@ -349,8 +349,8 @@ const AdminRefunds = () => {
                       <td class="text-right" style="font-size: 7px;">${refund.reason || '-'}</td>
                     </tr>
                   `;
-                }).join('')
-              ).join('')}
+			}).join('')
+		).join('')}
               
               <tr class="total-row">
                 <td colspan="4">Original Total</td>
@@ -565,8 +565,7 @@ const AdminRefunds = () => {
 						position: 'relative',
 						overflow: 'hidden'
 					}}>
-						<img src={process.env.PUBLIC_URL + '/Inventory logo.png'} alt="Inventory Logo" style={{ height: 50, maxWidth: '100%', objectFit: 'contain', marginRight: 12 }} />
-						<Typography
+						<img src="/Inventorylogo.png" alt="Inventory Logo" style={{ height: 40, marginRight: 12 }} />						<Typography
 							variant={isSm ? 'h6' : 'h4'}
 							color="primary"
 							sx={{
@@ -747,32 +746,32 @@ const AdminRefunds = () => {
 												boxShadow: '2px 0 5px -2px rgba(0,0,0,0.1)',
 												minWidth: { xs: 80, sm: 100 }
 											}}>{s.invoiceNumber || s._id?.slice(-6)}</TableCell>
-										<TableCell sx={cellSx}>{new Date(s.createdAt).toLocaleString()}</TableCell>
-										<TableCell sx={cellSx}>{sellersById[s.sellerId]?.username || s.sellerName || '-'}</TableCell>
-										<TableCell sx={cellSx}>{s.cashierName || '-'}</TableCell>
-										<TableCell sx={cellSx}>{s.customerName || '-'}</TableCell>
-										<TableCell sx={cellSx}>{(s.refunds || []).map(r => r.items.map(i => `${i.productName} x${i.quantity}`).join(', ')).join(' | ')}</TableCell>
-										<TableCell sx={{ ...cellSx, fontWeight: 'bold', color: '#d32f2f' }}>Rs. {calculateTotalRefund(s).toFixed(2)}</TableCell>
-										<TableCell>
-											<Box sx={{ display: 'flex', gap: 1 }}>
-												<Button
-													size="small"
-													variant="outlined"
-													onClick={() => handleViewRefund(s)}
-												>
-													View
-												</Button>
-												<IconButton
-													size="small"
-													color="primary"
-													onClick={() => handlePrintRefund(s)}
-													title="Print Refund Invoice"
-												>
-													<PrintIcon fontSize="small" />
-												</IconButton>
-											</Box>
-										</TableCell>
-									</TableRow>
+											<TableCell sx={cellSx}>{new Date(s.createdAt).toLocaleString()}</TableCell>
+											<TableCell sx={cellSx}>{sellersById[s.sellerId]?.username || s.sellerName || '-'}</TableCell>
+											<TableCell sx={cellSx}>{s.cashierName || '-'}</TableCell>
+											<TableCell sx={cellSx}>{s.customerName || '-'}</TableCell>
+											<TableCell sx={cellSx}>{(s.refunds || []).map(r => r.items.map(i => `${i.productName} x${i.quantity}`).join(', ')).join(' | ')}</TableCell>
+											<TableCell sx={{ ...cellSx, fontWeight: 'bold', color: '#d32f2f' }}>Rs. {calculateTotalRefund(s).toFixed(2)}</TableCell>
+											<TableCell>
+												<Box sx={{ display: 'flex', gap: 1 }}>
+													<Button
+														size="small"
+														variant="outlined"
+														onClick={() => handleViewRefund(s)}
+													>
+														View
+													</Button>
+													<IconButton
+														size="small"
+														color="primary"
+														onClick={() => handlePrintRefund(s)}
+														title="Print Refund Invoice"
+													>
+														<PrintIcon fontSize="small" />
+													</IconButton>
+												</Box>
+											</TableCell>
+										</TableRow>
 									);
 								})}
 								{filteredRefunds.length === 0 && (

@@ -9,18 +9,18 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// CORS configuration – allow all origins
-app.use(cors({
-  origin: '*',
+// CORS configuration – allow all origins and handle preflight explicitly
+const corsOptions = {
+  origin: true,             // reflect request origin
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
-  credentials: false,
-}));
+  credentials: true,        // allow cookies/auth headers if needed
+};
+app.use(cors(corsOptions));
 // express-cors middleware already handles preflight; explicit app.options('*')
 // registration triggers a path-to-regexp error with '*' so we omit it.
 
-// Temporarily disable helmet to check if it's blocking CORS
-// app.use(helmet());
+app.use(helmet());
 // Serve uploads folder for file viewing
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -43,6 +43,5 @@ app.use('/api/vendors', require('./routes/vendors'));
 app.use('/api/sales', require('./routes/sales'));
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || '0.0.0.0';
 
-app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
