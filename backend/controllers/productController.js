@@ -14,9 +14,29 @@ const Product = require('../models/Product');
 exports.getAll = async (req, res) => {
   try {
     const products = await Product.find();
-    res.json(products);
+    
+    if (!products || products.length === 0) {
+      return res.status(200).json({ 
+        message: 'No products found', 
+        products: [] 
+      });
+    }
+    
+    res.status(200).json(products);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error in getAll products:', error);
+    
+    if (error.name === 'MongoError' || error.name === 'MongooseError') {
+      return res.status(503).json({ 
+        message: 'Database connection error', 
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Service unavailable' 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Failed to retrieve products', 
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error' 
+    });
   }
 };
 
